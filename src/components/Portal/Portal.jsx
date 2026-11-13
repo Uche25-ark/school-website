@@ -1125,7 +1125,7 @@ function AssignmentsSection({ data, user, token, onRefresh, registerAttemptSubmi
     description: '',
     dueDate: '',
     durationMinutes: 30,
-    className: user.className || 'Year 10',
+    className: user.className || '',
     subject: user.subject || '',
     questions: [{ text: '', options: ['', '', '', ''], correctIndex: 0 }],
   })
@@ -1141,6 +1141,7 @@ function AssignmentsSection({ data, user, token, onRefresh, registerAttemptSubmi
   const submissionPromiseRef = useRef(null)
   const saveAnswersQueueRef = useRef(Promise.resolve())
   const now = useCurrentTime()
+  const classNames = [...new Set([...data.students, ...data.users].map((student) => student.className).filter(Boolean))]
 
   function updateQuestion(questionIndex, changes) {
     setForm({
@@ -1166,13 +1167,26 @@ function AssignmentsSection({ data, user, token, onRefresh, registerAttemptSubmi
         description: '',
         dueDate: '',
         durationMinutes: 30,
-        className: user.className || 'Year 10',
+        className: user.className || '',
         subject: user.subject || '',
         questions: [{ text: '', options: ['', '', '', ''], correctIndex: 0 }],
       })
       await onRefresh()
     } catch (createError) {
       setError(createError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function refreshActivities() {
+    setError('')
+    setBusy(true)
+    try {
+      await onRefresh()
+      setMessage('Assignments refreshed.')
+    } catch (refreshError) {
+      setError(refreshError.message)
     } finally {
       setBusy(false)
     }
@@ -1291,10 +1305,12 @@ function AssignmentsSection({ data, user, token, onRefresh, registerAttemptSubmi
 
   return (
     <>
-      <SectionTitle eyebrow={user.role === 'student' ? 'Your classwork' : `Classroom${user.subject ? ` · ${user.subject}` : ''}`} title={user.role === 'student' ? 'My assignments' : 'Assignments'} />
+      <SectionTitle eyebrow={user.role === 'student' ? 'Your classwork' : `Classroom${user.subject ? ` · ${user.subject}` : ''}`} title={user.role === 'student' ? 'My assignments' : 'Assignments'} action={<button type="button" disabled={busy} onClick={() => void refreshActivities()} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-50">{busy ? 'Refreshing…' : 'Refresh assignments'}</button>} />
+      {user.role === 'student' && message && <p role="status" className="mb-4 text-sm text-emerald-700">{message}</p>}
       {user.role !== 'student' && <Panel title="Create a timed assignment"><form onSubmit={createAssignment} className="grid gap-4 p-5 md:grid-cols-2">
         <label className="block text-sm font-semibold text-slate-700">Assignment title<input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} className="portal-input" placeholder="e.g. Chapter 4 questions" /></label>
-        <label className="block text-sm font-semibold text-slate-700">Class<input required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" placeholder="Year 10" /></label>
+        <label className="block text-sm font-semibold text-slate-700">Class<input required list="assignment-classes" value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" placeholder="Class name" /></label>
+        <datalist id="assignment-classes">{classNames.map((className) => <option key={className} value={className} />)}</datalist>
         <label className="block text-sm font-semibold text-slate-700">Subject<input required readOnly={user.role === 'teacher' && Boolean(user.subject)} value={user.subject || form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input read-only:bg-slate-50" placeholder="e.g. Mathematics" /></label>
         <label className="block text-sm font-semibold text-slate-700">Time allowed (minutes)<input required type="number" min="1" max="240" value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: Number(event.target.value) })} className="portal-input" /></label>
         <label className="block text-sm font-semibold text-slate-700">Due date and time<input required type="datetime-local" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="portal-input" /></label>
@@ -1331,7 +1347,7 @@ function AssignmentsSection({ data, user, token, onRefresh, registerAttemptSubmi
           {isTimed && user.role !== 'student' && <p className="mt-4 text-sm font-medium text-slate-500">{assignment.durationMinutes} minutes · {questionCount} questions</p>}
         </article>
         })}
-        {!data.assignments.length && <EmptyState>No assignments have been shared yet.</EmptyState>}
+        {!data.assignments.length && <EmptyState>No assignments have been shared with {user.className || 'your class'} yet.</EmptyState>}
       </div>
     </>
   )
@@ -1340,7 +1356,7 @@ function AssignmentsSection({ data, user, token, onRefresh, registerAttemptSubmi
 function ExamsSection({ data, user, token, onRefresh, registerAttemptSubmit }) {
   const [form, setForm] = useState({
     title: '',
-    className: user.className || 'Year 10',
+    className: user.className || '',
     subject: user.subject || '',
     dueDate: '',
     durationMinutes: 30,
@@ -1358,6 +1374,7 @@ function ExamsSection({ data, user, token, onRefresh, registerAttemptSubmit }) {
   const submissionPromiseRef = useRef(null)
   const saveAnswersQueueRef = useRef(Promise.resolve())
   const now = useCurrentTime()
+  const classNames = [...new Set([...data.students, ...data.users].map((student) => student.className).filter(Boolean))]
 
   function updateQuestion(questionIndex, changes) {
     setForm({
@@ -1385,10 +1402,23 @@ function ExamsSection({ data, user, token, onRefresh, registerAttemptSubmit }) {
         }),
       })
       setMessage(result.approval ? 'Exam request submitted for admin approval.' : 'Exam published. Students in this class can now take it.')
-      setForm({ title: '', className: user.className || 'Year 10', subject: user.subject || '', dueDate: '', durationMinutes: 30, questions: [{ text: '', options: ['', '', '', ''], correctIndex: 0 }] })
+      setForm({ title: '', className: user.className || '', subject: user.subject || '', dueDate: '', durationMinutes: 30, questions: [{ text: '', options: ['', '', '', ''], correctIndex: 0 }] })
       await onRefresh()
     } catch (createError) {
       setError(createError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function refreshActivities() {
+    setError('')
+    setBusy(true)
+    try {
+      await onRefresh()
+      setMessage('Exams and tests refreshed.')
+    } catch (refreshError) {
+      setError(refreshError.message)
     } finally {
       setBusy(false)
     }
@@ -1498,12 +1528,14 @@ function ExamsSection({ data, user, token, onRefresh, registerAttemptSubmit }) {
 
   return (
     <>
-      <SectionTitle eyebrow={user.role === 'student' ? 'Show what you know' : 'Classroom'} title={user.role === 'student' ? 'Exams & tests' : 'Exams & tests'} />
+      <SectionTitle eyebrow={user.role === 'student' ? 'Show what you know' : 'Classroom'} title="Exams & tests" action={<button type="button" disabled={busy} onClick={() => void refreshActivities()} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-50">{busy ? 'Refreshing…' : 'Refresh exams & tests'}</button>} />
+      {user.role === 'student' && message && <p role="status" className="mb-4 text-sm text-emerald-700">{message}</p>}
       {score && <div role="status" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><div><p className="font-bold text-emerald-900">Your result has been recorded.</p><p className="mt-1 text-sm text-emerald-800">{score.examTitle}</p></div><span className="rounded-xl bg-white px-4 py-2 text-lg font-bold text-emerald-800">{score.score} / {score.total}</span></div>}
       {user.role !== 'student' && <Panel title="Create a multiple-choice exam">
         <form onSubmit={createExam} className="grid gap-4 p-5 md:grid-cols-2">
           <label className="block text-sm font-semibold text-slate-700">Exam title<input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} className="portal-input" placeholder="e.g. Fractions check-in" /></label>
-          <label className="block text-sm font-semibold text-slate-700">Class<input required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" /></label>
+          <label className="block text-sm font-semibold text-slate-700">Class<input required list="exam-classes" value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" /></label>
+          <datalist id="exam-classes">{classNames.map((className) => <option key={className} value={className} />)}</datalist>
           <label className="block text-sm font-semibold text-slate-700 md:col-span-2">Subject<input required readOnly={user.role === 'teacher' && Boolean(user.subject)} value={user.subject || form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input read-only:bg-slate-50" placeholder="e.g. Mathematics" /></label>
           <label className="block text-sm font-semibold text-slate-700">Time allowed (minutes)<input required type="number" min="1" max="240" value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: Number(event.target.value) })} className="portal-input" /></label>
           <label className="block text-sm font-semibold text-slate-700">Deadline<input required type="datetime-local" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="portal-input" /></label>
@@ -1526,7 +1558,7 @@ function ExamsSection({ data, user, token, onRefresh, registerAttemptSubmit }) {
           const questionCount = exam.questionCount ?? exam.questions.length
           return <article key={exam.id} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><span className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800">{exam.className}</span><span className="text-xs text-slate-400">{questionCount} question{questionCount === 1 ? '' : 's'}</span></div><h2 className="mt-4 font-slab text-lg font-bold text-slate-900">{exam.title}</h2><p className="mt-2 text-xs text-slate-500">Due {new Date(exam.dueDate).toLocaleString()} · {exam.durationMinutes} minutes</p>{user.role === 'student' ? result ? <p className="mt-3 text-sm font-semibold text-emerald-700">{result.missed ? 'Missed deadline' : 'Completed'} · score {result.score}/{result.total}</p> : attempt ? <p className="mt-3 text-sm font-semibold text-amber-700">Attempt started. It cannot be resumed; it will be submitted automatically when time expires.</p> : expired ? <p className="mt-3 text-sm font-bold text-rose-700">Deadline passed · score 0/{questionCount}</p> : <button disabled={busy} onClick={() => startExam(exam)} className="mt-4 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Start exam →</button> : <p className="mt-2 text-sm text-slate-500">Available to {exam.className}</p>}</article>
         })}
-        {!data.exams.length && <EmptyState>No exams have been published yet.</EmptyState>}
+        {!data.exams.length && <EmptyState>No exams or tests have been published for {user.className || 'your class'} yet.</EmptyState>}
       </div>
     </>
   )
@@ -1546,6 +1578,7 @@ function AssessmentsSection({ data, user, token, onRefresh }) {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const classNames = [...new Set([...data.students, ...data.users].map((student) => student.className).filter(Boolean))]
 
   async function createAssessment(event) {
     event.preventDefault()
@@ -1559,6 +1592,19 @@ function AssessmentsSection({ data, user, token, onRefresh }) {
       await onRefresh()
     } catch (createError) {
       setError(createError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function refreshAssessments() {
+    setError('')
+    setBusy(true)
+    try {
+      await onRefresh()
+      setMessage('Assessments refreshed.')
+    } catch (refreshError) {
+      setError(refreshError.message)
     } finally {
       setBusy(false)
     }
@@ -1591,12 +1637,14 @@ function AssessmentsSection({ data, user, token, onRefresh }) {
 
   return (
     <>
-      <SectionTitle eyebrow={user.subject ? `Subject · ${user.subject}` : 'Teaching & learning'} title={user.role === 'student' ? 'My assessments' : 'Subject assessments'} />
+      <SectionTitle eyebrow={user.subject ? `Subject · ${user.subject}` : 'Teaching & learning'} title={user.role === 'student' ? 'My assessments' : 'Subject assessments'} action={<button type="button" disabled={busy} onClick={() => void refreshAssessments()} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 disabled:opacity-50">{busy ? 'Refreshing…' : 'Refresh assessments'}</button>} />
+      {user.role === 'student' && message && <p role="status" className="mb-4 text-sm text-emerald-700">{message}</p>}
       {user.role !== 'student' && <Panel title="Document an assessment"><form onSubmit={createAssessment} className="grid gap-4 p-5 md:grid-cols-2">
         <label className="block text-sm font-semibold text-slate-700">Assessment name<input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} className="portal-input" placeholder="e.g. Fractions test" /></label>
         <label className="block text-sm font-semibold text-slate-700">Type<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} className="portal-input">{['Classwork', 'Quiz', 'Test', 'Project', 'Practical', 'Examination', 'Other'].map((category) => <option key={category}>{category}</option>)}</select></label>
         <label className="block text-sm font-semibold text-slate-700">Subject<input required readOnly={user.role === 'teacher' && Boolean(user.subject)} value={user.subject || form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input read-only:bg-slate-50" placeholder="Subject" /></label>
-        <label className="block text-sm font-semibold text-slate-700">Class<input required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" placeholder="Class" /></label>
+        <label className="block text-sm font-semibold text-slate-700">Class<input required list="assessment-classes" value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" placeholder="Class" /></label>
+        <datalist id="assessment-classes">{classNames.map((className) => <option key={className} value={className} />)}</datalist>
         <label className="block text-sm font-semibold text-slate-700">Maximum score<input required type="number" min="1" max="1000" value={form.maxScore} onChange={(event) => setForm({ ...form, maxScore: Number(event.target.value) })} className="portal-input" /></label>
         <label className="block text-sm font-semibold text-slate-700">Assessment date<input required type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} className="portal-input" /></label>
         <div className="flex flex-wrap items-center gap-3 md:col-span-2"><button disabled={busy} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-700 disabled:opacity-60">{busy ? 'Saving…' : 'Add to gradebook'}</button>{error && <p role="alert" className="text-sm text-rose-700">{error}</p>}{message && <p role="status" className="text-sm text-emerald-700">{message}</p>}</div>
@@ -1891,7 +1939,7 @@ function ReportCardsSection({ data, user, token, onRefresh }) {
   )
 }
 
-function PortalWorkspace({ user, data, token, onRefresh, onSignOut }) {
+function PortalWorkspace({ user, data, token, onRefresh, onSignOut, syncError }) {
   const [section, setSection] = useState('overview')
   const [profilePhotoVersion, setProfilePhotoVersion] = useState(0)
   const activeAttemptSubmit = useRef(null)
@@ -1949,6 +1997,7 @@ function PortalWorkspace({ user, data, token, onRefresh, onSignOut }) {
         </aside>
         <main className="min-w-0 flex-1 px-4 py-7 sm:px-7 lg:px-9 lg:py-9">
           <nav className="mb-6 flex gap-2 overflow-x-auto pb-1 lg:hidden" aria-label="Portal sections">{links.map((link) => <button key={link.id} onClick={() => void navigateToSection(link.id)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${section === link.id ? 'bg-slate-900 text-white' : 'bg-white text-slate-600'}`}>{link.label}</button>)}</nav>
+          {syncError && <p role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">Portal updates could not be loaded: {syncError}</p>}
           {content}
         </main>
       </div>
@@ -1960,13 +2009,16 @@ export default function Portal() {
   const [token, setToken] = useState(() => localStorage.getItem('school-portal-token') || '')
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
+  const [syncError, setSyncError] = useState('')
   const [loading, setLoading] = useState(Boolean(token))
+  const portalLoaded = Boolean(data)
 
-  async function refresh(activeToken = token) {
+  const refresh = useCallback(async (activeToken = token) => {
     const response = await request('/api/portal', { token: activeToken })
     setData(response)
     setError('')
-  }
+    setSyncError('')
+  }, [token])
 
   useEffect(() => {
     if (!token) return
@@ -1985,10 +2037,35 @@ export default function Portal() {
     return () => { active = false }
   }, [token])
 
+  useEffect(() => {
+    if (!token || !portalLoaded) return undefined
+    let active = true
+    let syncing = false
+    const syncPortal = async () => {
+      if (!active || document.visibilityState === 'hidden' || syncing) return
+      syncing = true
+      try {
+        await refresh(token)
+      } catch (syncFailure) {
+        if (active) setSyncError(syncFailure.message)
+      } finally {
+        syncing = false
+      }
+    }
+    window.addEventListener('focus', syncPortal)
+    document.addEventListener('visibilitychange', syncPortal)
+    return () => {
+      active = false
+      window.removeEventListener('focus', syncPortal)
+      document.removeEventListener('visibilitychange', syncPortal)
+    }
+  }, [portalLoaded, refresh, token])
+
   async function login(email, password) {
     const response = await request('/api/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     localStorage.setItem('school-portal-token', response.token)
     setError('')
+    setSyncError('')
     setLoading(true)
     setToken(response.token)
   }
@@ -2000,11 +2077,12 @@ export default function Portal() {
       localStorage.removeItem('school-portal-token')
       setToken('')
       setData(null)
+      setSyncError('')
     }
   }
 
   if (!token) return <Login onLogin={login} />
   if (loading) return <main className="flex min-h-screen items-center justify-center bg-[#f5f7fb] text-sm font-semibold text-slate-500">Loading your portal…</main>
   if (!data) return <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#f5f7fb] px-4 text-center"><p role="alert" className="text-sm text-rose-700">{error || 'Unable to load your portal.'}</p><button onClick={() => setToken('')} className="font-bold text-emerald-700">Return to sign in</button></main>
-  return <PortalWorkspace user={data.user} data={data} token={token} onRefresh={refresh} onSignOut={signOut} />
+  return <PortalWorkspace user={data.user} data={data} token={token} onRefresh={refresh} onSignOut={signOut} syncError={syncError} />
 }
