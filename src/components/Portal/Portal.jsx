@@ -13,12 +13,14 @@ const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
 const NAVIGATION = {
   admin: [
     { id: 'overview', label: 'Overview', icon: '⌂' },
+    { id: 'profile', label: 'My profile', icon: '◉' },
     { id: 'users', label: 'Manage users', icon: '♙' },
     { id: 'results', label: 'School results', icon: '▤' },
     { id: 'report-cards', label: 'Report cards', icon: '▧' },
   ],
   teacher: [
     { id: 'overview', label: 'Overview', icon: '⌂' },
+    { id: 'profile', label: 'My profile', icon: '◉' },
     { id: 'users', label: 'My students', icon: '♙' },
     { id: 'attendance', label: 'Attendance', icon: '✓' },
     { id: 'assignments', label: 'Assignments', icon: '▧' },
@@ -29,6 +31,7 @@ const NAVIGATION = {
   ],
   student: [
     { id: 'overview', label: 'Overview', icon: '⌂' },
+    { id: 'profile', label: 'My profile', icon: '◉' },
     { id: 'assignments', label: 'My assignments', icon: '▧' },
     { id: 'assessments', label: 'My assessments', icon: '◉' },
     { id: 'exams', label: 'Exams & tests', icon: '✎' },
@@ -59,6 +62,26 @@ async function request(path, { token, ...options } = {}) {
   }
   if (!response.ok) throw new Error(result.error || 'Something went wrong. Please try again.')
   return result
+}
+
+async function uploadProfilePhoto(token, userId, file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    throw new Error('Choose a JPG, PNG, or WebP image.')
+  }
+  if (file.size > 700 * 1024) {
+    throw new Error('Profile photos must be 700 KB or smaller.')
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(new Error('The selected photo could not be read.'))
+    reader.readAsDataURL(file)
+  })
+  await request(`/api/users/${encodeURIComponent(userId)}/profile-photo`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ dataUrl }),
+  })
 }
 
 function useAttemptExit({ attemptId, endpoint, token, answers, registerAttemptSubmit, submit, completedRef }) {
@@ -148,7 +171,7 @@ function EmptyState({ children }) {
   return <div className="rounded-xl border border-dashed border-slate-200 bg-white px-5 py-10 text-center text-sm text-slate-500">{children}</div>
 }
 
-function PortalHeader({ user, token, onSignOut }) {
+function PortalHeader({ user, token, photoVersion, onSignOut }) {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
   const [passwordError, setPasswordError] = useState('')
@@ -208,11 +231,7 @@ function PortalHeader({ user, token, onSignOut }) {
               <p className="text-sm font-semibold text-slate-800">{user.name}</p>
               <p className="text-xs capitalize text-slate-500">{user.role}{user.className ? ` · ${user.className}` : ''}{user.subject ? ` · ${user.subject}` : ''}</p>
             </div>
-            {user.role === 'student'
-              ? <ProfilePhoto token={token} userId={user.id} name={user.name} className="h-10 w-10" />
-              : <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 font-bold text-slate-600" aria-hidden="true">
-                {user.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}
-              </span>}
+            <ProfilePhoto token={token} userId={user.id} name={user.name} refreshKey={photoVersion} className="h-10 w-10" />
             {['admin', 'teacher', 'student'].includes(user.role) && <button onClick={() => { setPasswordDialogOpen(true); setPasswordError(''); setPasswordMessage('') }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"><span className="sm:hidden">Password</span><span className="hidden sm:inline">Change password</span></button>}
             <button onClick={onSignOut} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600">
               Sign out
@@ -406,7 +425,65 @@ function Overview({ user, data, setSection }) {
   )
 }
 
-function UsersSection({ data, user, token, onRefresh }) {
+function ProfileSection({ user, token, photoVersion, onPhotoUpdated }) {
+  const [photoError, setPhotoError] = useState('')
+  const [photoMessage, setPhotoMessage] = useState('')
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const canUploadPhoto = user.role === 'admin' || user.role === 'teacher'
+
+  async function handlePhotoChange(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setPhotoError('')
+    setPhotoMessage('')
+    setPhotoBusy(true)
+    try {
+      await uploadProfilePhoto(token, user.id, file)
+      onPhotoUpdated()
+      setPhotoMessage('Your profile photo has been updated.')
+    } catch (uploadError) {
+      setPhotoError(uploadError.message)
+    } finally {
+      setPhotoBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <SectionTitle eyebrow="Account" title="My profile" />
+      <div className="grid items-start gap-5 lg:grid-cols-[.8fr_1.2fr]">
+        <Panel title="Profile photo">
+          <div className="flex flex-col items-center gap-4 p-6 text-center">
+            <ProfilePhoto token={token} userId={user.id} name={user.name} refreshKey={photoVersion} className="h-28 w-28 text-2xl" />
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">{user.name}</h2>
+              <p className="mt-1 text-sm capitalize text-slate-500">{user.role}</p>
+            </div>
+            {canUploadPhoto
+              ? <label className="cursor-pointer rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700">{photoBusy ? 'Uploading…' : 'Upload profile photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusy} onChange={(event) => void handlePhotoChange(event)} className="sr-only" /></label>
+              : <p className="text-sm text-slate-500">Ask an administrator or teacher to upload or change your profile photo.</p>}
+            <p className="text-xs text-slate-400">JPG, PNG, or WebP · maximum 700 KB</p>
+            {photoError && <p role="alert" className="text-sm text-rose-700">{photoError}</p>}
+            {photoMessage && <p role="status" className="text-sm text-emerald-700">{photoMessage}</p>}
+          </div>
+        </Panel>
+        <Panel title="Account information">
+          <dl className="divide-y divide-slate-100">
+            <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Full name</dt><dd className="text-sm text-slate-800">{user.name}</dd></div>
+            <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Email address</dt><dd className="text-sm text-slate-800">{user.email}</dd></div>
+            <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Account type</dt><dd className="text-sm capitalize text-slate-800">{user.role}</dd></div>
+            {user.className && <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Class</dt><dd className="text-sm text-slate-800">{user.className}</dd></div>}
+            {user.subject && <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Subject</dt><dd className="text-sm text-slate-800">{user.subject}</dd></div>}
+            {user.role === 'teacher' && user.formTeacherClassNames?.length > 0 && <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Form-teacher classes</dt><dd className="text-sm text-slate-800">{user.formTeacherClassNames.join(', ')}</dd></div>}
+          </dl>
+        </Panel>
+      </div>
+    </>
+  )
+}
+
+function UsersSection({ data, user, token, onRefresh, onPhotoUpdated }) {
   const isAdmin = user.role === 'admin'
   const classes = [...new Set([
     ...data.students.map((student) => student.className),
@@ -494,28 +571,11 @@ function UsersSection({ data, user, token, onRefresh }) {
 
   async function uploadPhoto(student, file) {
     setPhotoError('')
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setPhotoError('Choose a JPG, PNG, or WebP image.')
-      return
-    }
-    if (file.size > 700 * 1024) {
-      setPhotoError('Profile photos must be 700 KB or smaller.')
-      return
-    }
     setPhotoBusyId(student.id)
     try {
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result)
-        reader.onerror = () => reject(new Error('The selected photo could not be read.'))
-        reader.readAsDataURL(file)
-      })
-      await request(`/api/users/${encodeURIComponent(student.id)}/profile-photo`, {
-        token,
-        method: 'POST',
-        body: JSON.stringify({ dataUrl }),
-      })
+      await uploadProfilePhoto(token, student.id, file)
       setPhotoVersions({ ...photoVersions, [student.id]: (photoVersions[student.id] || 0) + 1 })
+      if (student.id === user.id) onPhotoUpdated()
     } catch (uploadError) {
       setPhotoError(uploadError.message)
     } finally {
@@ -549,6 +609,9 @@ function UsersSection({ data, user, token, onRefresh }) {
     setSelectedClasses(selected?.formTeacherClassNames || [])
   }
 
+  const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId)
+  const assignableClasses = classes.filter((className) => className !== selectedTeacher?.className)
+
   return (
     <>
       <SectionTitle eyebrow={isAdmin ? 'Administration' : 'Classroom'} title={isAdmin ? 'Manage school accounts' : 'My students'} />
@@ -579,8 +642,8 @@ function UsersSection({ data, user, token, onRefresh }) {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Name</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Class</th><th className="px-5 py-3">Subject</th><th className="px-5 py-3">Actions</th></tr></thead>
-              <tbody className="divide-y divide-slate-100">{data.users.map((account) => <tr key={account.id}><td className="px-5 py-4"><span className="flex items-center gap-3">{account.role === 'student' ? <ProfilePhoto token={token} userId={account.id} name={account.name} refreshKey={photoVersions[account.id] || 0} className="h-9 w-9 shrink-0 text-[10px]" /> : <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-600">{account.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}</span>}<span className="font-semibold text-slate-800">{account.name}</span></span></td><td className="px-5 py-4 text-slate-500">{account.email}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold capitalize text-slate-600">{account.role}</span></td><td className="px-5 py-4 text-slate-500">{account.className || '—'}</td><td className="px-5 py-4 text-slate-500">{account.subject || '—'}</td><td className="px-5 py-4"><div className="space-y-2">
-                {account.role === 'student' && <label className="block cursor-pointer text-xs font-bold text-emerald-700">{photoBusyId === account.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === account.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(account, file); event.target.value = '' }} className="sr-only" /></label>}
+              <tbody className="divide-y divide-slate-100">{data.users.map((account) => <tr key={account.id}><td className="px-5 py-4"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={account.id} name={account.name} refreshKey={photoVersions[account.id] || 0} className="h-9 w-9 shrink-0 text-[10px]" /><span className="font-semibold text-slate-800">{account.name}</span></span></td><td className="px-5 py-4 text-slate-500">{account.email}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold capitalize text-slate-600">{account.role}</span></td><td className="px-5 py-4 text-slate-500">{account.className || '—'}</td><td className="px-5 py-4 text-slate-500">{account.subject || '—'}</td><td className="px-5 py-4"><div className="space-y-2">
+                <label className="block cursor-pointer text-xs font-bold text-emerald-700">{photoBusyId === account.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === account.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(account, file); event.target.value = '' }} className="sr-only" /></label>
                 <div className="flex gap-1"><input aria-label={`Temporary password for ${account.name}`} type="password" minLength="8" value={resetPasswords[account.id] || ''} onChange={(event) => setResetPasswords({ ...resetPasswords, [account.id]: event.target.value })} className="w-32 rounded-md border border-slate-200 px-2 py-1 text-xs" placeholder="New password" /><button disabled={resettingId === account.id} onClick={() => void resetPassword(account)} className="text-xs font-bold text-sky-700 disabled:opacity-60">{resettingId === account.id ? 'Resetting…' : 'Reset'}</button></div>
                 <button disabled={account.role === 'admin' || deletingId === account.id} onClick={() => deleteUser(account)} className="text-xs font-bold text-rose-700 hover:text-rose-900 disabled:cursor-not-allowed disabled:opacity-40">{deletingId === account.id ? 'Deleting…' : account.role === 'admin' ? 'Protected' : 'Delete account'}</button>
               </div></td></tr>)}</tbody>
@@ -596,11 +659,12 @@ function UsersSection({ data, user, token, onRefresh }) {
         <Panel title="Assign form teachers">
           {!teachers.length ? <div className="p-5"><EmptyState>Create a teacher account before assigning a form class.</EmptyState></div> : <form onSubmit={saveFormTeacherClasses} className="space-y-4 p-5">
             <label className="block text-sm font-semibold text-slate-700">Teacher<select value={selectedTeacherId} onChange={(event) => chooseTeacher(event.target.value)} className="portal-input">{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name} · {teacher.className || 'No primary class'}</option>)}</select></label>
-            {classes.length ? <fieldset><legend className="text-sm font-semibold text-slate-700">Form-teacher classes</legend><div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{classes.map((className) => {
-              const primaryClass = teachers.find((teacher) => teacher.id === selectedTeacherId)?.className
+            {assignableClasses.length ? <fieldset><legend className="text-sm font-semibold text-slate-700">Form-teacher classes</legend><div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{assignableClasses.map((className) => {
               const checked = selectedClasses.includes(className)
-              return <label key={className} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${className === primaryClass ? 'border-slate-100 bg-slate-50 text-slate-400' : 'border-slate-200 text-slate-700'}`}><input type="checkbox" disabled={className === primaryClass} checked={className === primaryClass || checked} onChange={(event) => setSelectedClasses(event.target.checked ? [...selectedClasses, className] : selectedClasses.filter((item) => item !== className))} />{className}{className === primaryClass ? ' · primary class' : ''}</label>
-            })}</div></fieldset> : <p className="text-sm text-slate-500">Add student or teacher accounts with class names before assigning form classes.</p>}
+              return <label key={className} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={checked} onChange={(event) => setSelectedClasses(event.target.checked ? [...selectedClasses, className] : selectedClasses.filter((item) => item !== className))} />{className}</label>
+            })}</div></fieldset> : classes.length
+              ? <p className="text-sm text-slate-500">The teacher’s primary class is already included in their access; no additional classes are available to assign.</p>
+              : <p className="text-sm text-slate-500">Add student or teacher accounts with class names before assigning form classes.</p>}
             <div className="flex flex-wrap items-center gap-3"><button disabled={assignmentBusy} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{assignmentBusy ? 'Saving…' : 'Save class assignments'}</button>{assignmentError && <p role="alert" className="text-sm text-rose-700">{assignmentError}</p>}{assignmentMessage && <p role="status" className="text-sm text-emerald-700">{assignmentMessage}</p>}</div>
           </form>}
         </Panel>
@@ -1451,6 +1515,7 @@ function ReportCardsSection({ data, user, token, onRefresh }) {
 
 function PortalWorkspace({ user, data, token, onRefresh, onSignOut }) {
   const [section, setSection] = useState('overview')
+  const [profilePhotoVersion, setProfilePhotoVersion] = useState(0)
   const activeAttemptSubmit = useRef(null)
   const registerAttemptSubmit = useCallback((submit) => {
     activeAttemptSubmit.current = submit
@@ -1469,8 +1534,10 @@ function PortalWorkspace({ user, data, token, onRefresh, onSignOut }) {
   const links = NAVIGATION[user.role]
   const content = section === 'overview'
     ? <Overview user={user} data={data} setSection={setSection} />
+    : section === 'profile'
+      ? <ProfileSection user={user} token={token} photoVersion={profilePhotoVersion} onPhotoUpdated={() => setProfilePhotoVersion((version) => version + 1)} />
     : section === 'users'
-      ? <UsersSection data={data} user={user} token={token} onRefresh={onRefresh} />
+      ? <UsersSection data={data} user={user} token={token} onRefresh={onRefresh} onPhotoUpdated={() => setProfilePhotoVersion((version) => version + 1)} />
       : section === 'attendance'
         ? <AttendanceSection data={data} user={user} token={token} onRefresh={onRefresh} />
         : section === 'assignments'
@@ -1485,7 +1552,7 @@ function PortalWorkspace({ user, data, token, onRefresh, onSignOut }) {
 
   return (
     <div className="min-h-screen bg-[#f5f7fb]">
-      <PortalHeader user={user} token={token} onSignOut={handleSignOut} />
+      <PortalHeader user={user} token={token} photoVersion={profilePhotoVersion} onSignOut={handleSignOut} />
       <div className="mx-auto flex max-w-[1440px]">
         <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-white px-4 py-7 lg:block">
           <p className="px-3 text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">Workspace</p>

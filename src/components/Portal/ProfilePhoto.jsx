@@ -23,7 +23,7 @@ export default function ProfilePhoto({ token, userId, name, className = '', refr
         objectUrl = URL.createObjectURL(photo)
         setPhotoUrl(objectUrl)
       } catch (error) {
-        if (error.name !== 'AbortError') console.error('Unable to load student profile photo:', error)
+        if (error.name !== 'AbortError') console.error('Unable to load user profile photo:', error)
       }
     }
 
