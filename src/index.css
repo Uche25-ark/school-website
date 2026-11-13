@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --font-slab: "Roboto Slab", serif;
+  --color-brand: #78c750;
+  --color-brand-dark: #69b443;
+  --color-ink: #1f2133;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  color: #333;
+}
+
+.portal-input {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  padding: 0.75rem 1rem;
+  color: #0f172a;
+  font: inherit;
+  font-weight: 400;
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.portal-input:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 4px #ecfdf5;
+}
