@@ -15,6 +15,9 @@ const NAVIGATION = {
     { id: 'overview', label: 'Overview', icon: '⌂' },
     { id: 'profile', label: 'My profile', icon: '◉' },
     { id: 'users', label: 'Manage users', icon: '♙' },
+    { id: 'create-account', label: 'Create account', icon: '+' },
+    { id: 'form-teachers', label: 'Form teachers', icon: '▣' },
+    { id: 'approvals', label: 'Approvals', icon: '✓' },
     { id: 'results', label: 'School results', icon: '▤' },
     { id: 'report-cards', label: 'Report cards', icon: '▧' },
   ],
@@ -77,7 +80,7 @@ async function uploadProfilePhoto(token, userId, file) {
     reader.onerror = () => reject(new Error('The selected photo could not be read.'))
     reader.readAsDataURL(file)
   })
-  await request(`/api/users/${encodeURIComponent(userId)}/profile-photo`, {
+  return request(`/api/users/${encodeURIComponent(userId)}/profile-photo`, {
     token,
     method: 'POST',
     body: JSON.stringify({ dataUrl }),
@@ -150,6 +153,37 @@ function formatDate(value) {
 
 function getToday() {
   return new Date().toISOString().slice(0, 10)
+}
+
+function downloadCsv(filename, headers, rows) {
+  const escapeCell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`
+  const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(',')).join('\r\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function PaginationControls({ page, pageCount, onPageChange, pageSize, onPageSizeChange, total }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4">
+      <div className="flex items-center gap-3 text-sm text-slate-500">
+        <span>{total ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}` : '0 accounts'}</span>
+        <label className="flex items-center gap-2">Rows
+          <select value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} className="rounded-lg border border-slate-200 px-2 py-1">
+            {[10, 25, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 disabled:opacity-40">Previous</button>
+        <span className="text-sm text-slate-500">Page {page} of {pageCount}</span>
+        <button type="button" disabled={page >= pageCount} onClick={() => onPageChange(page + 1)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 disabled:opacity-40">Next</button>
+      </div>
+    </div>
+  )
 }
 
 function StatCard({ label, value, note, icon, tint = 'bg-emerald-50 text-emerald-700' }) {
@@ -439,9 +473,13 @@ function ProfileSection({ user, token, photoVersion, onPhotoUpdated }) {
     setPhotoMessage('')
     setPhotoBusy(true)
     try {
-      await uploadProfilePhoto(token, user.id, file)
-      onPhotoUpdated()
-      setPhotoMessage('Your profile photo has been updated.')
+      const result = await uploadProfilePhoto(token, user.id, file)
+      if (result.approval) {
+        setPhotoMessage('Your profile photo request was submitted for admin approval.')
+      } else {
+        onPhotoUpdated()
+        setPhotoMessage('Your profile photo has been updated.')
+      }
     } catch (uploadError) {
       setPhotoError(uploadError.message)
     } finally {
@@ -475,6 +513,7 @@ function ProfileSection({ user, token, photoVersion, onPhotoUpdated }) {
             <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Account type</dt><dd className="text-sm capitalize text-slate-800">{user.role}</dd></div>
             {user.className && <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Class</dt><dd className="text-sm text-slate-800">{user.className}</dd></div>}
             {user.subject && <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Subject</dt><dd className="text-sm text-slate-800">{user.subject}</dd></div>}
+            {user.role === 'teacher' && <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Form-teacher role</dt><dd className="text-sm text-slate-800">{user.isFormTeacher ? 'Assigned' : 'Not assigned'}</dd></div>}
             {user.role === 'teacher' && user.formTeacherClassNames?.length > 0 && <div className="grid gap-1 px-5 py-4 sm:grid-cols-[150px_1fr]"><dt className="text-sm font-semibold text-slate-500">Form-teacher classes</dt><dd className="text-sm text-slate-800">{user.formTeacherClassNames.join(', ')}</dd></div>}
           </dl>
         </Panel>
@@ -483,44 +522,42 @@ function ProfileSection({ user, token, photoVersion, onPhotoUpdated }) {
   )
 }
 
-function UsersSection({ data, user, token, onRefresh, onPhotoUpdated }) {
+function CreateAccountSection({ data, user, token, onRefresh, onBack }) {
   const isAdmin = user.role === 'admin'
-  const classes = [...new Set([
+  const allowedClasses = [...new Set([user.className, ...(user.formTeacherClassNames || [])].filter(Boolean))]
+  const allClasses = [...new Set([
     ...data.students.map((student) => student.className),
     ...data.users.map((account) => account.className),
   ].filter(Boolean))]
-  const allowedTeacherClasses = [...new Set([user.className, ...(user.formTeacherClassNames || [])].filter(Boolean))]
-  const [form, setForm] = useState({ name: '', email: '', role: 'student', className: user.className || classes[0] || 'Year 10', subject: '', password: '' })
-  const [message, setMessage] = useState('')
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    role: 'student',
+    className: user.role === 'teacher' ? allowedClasses[0] || '' : '',
+    subject: '',
+    password: '',
+    gender: '',
+    dateOfBirth: '',
+    dateJoined: getToday(),
+  })
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [deletingId, setDeletingId] = useState('')
-  const [deleteMessage, setDeleteMessage] = useState('')
-  const [deleteError, setDeleteError] = useState('')
-  const [resetPasswords, setResetPasswords] = useState({})
-  const [resettingId, setResettingId] = useState('')
-  const [resetMessage, setResetMessage] = useState('')
-  const [resetError, setResetError] = useState('')
-  const [photoVersions, setPhotoVersions] = useState({})
-  const [photoBusyId, setPhotoBusyId] = useState('')
-  const [photoError, setPhotoError] = useState('')
-  const teachers = data.users.filter((account) => account.role === 'teacher')
-  const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id || '')
-  const [selectedClasses, setSelectedClasses] = useState(teachers[0]?.formTeacherClassNames || [])
-  const [assignmentBusy, setAssignmentBusy] = useState(false)
-  const [assignmentMessage, setAssignmentMessage] = useState('')
-  const [assignmentError, setAssignmentError] = useState('')
 
-  async function createUser(event) {
+  async function createAccount(event) {
     event.preventDefault()
     setError('')
     setMessage('')
     setBusy(true)
     try {
-      await request('/api/users', { token, method: 'POST', body: JSON.stringify(form) })
-      setMessage('Account created successfully.')
-      setForm({ name: '', email: '', role: 'student', className: user.className || classes[0] || 'Year 10', subject: '', password: '' })
-      await onRefresh()
+      const result = await request('/api/users', { token, method: 'POST', body: JSON.stringify(form) })
+      if (result.approval) {
+        setMessage('Student account request submitted for admin approval.')
+      } else {
+        setMessage('Account created successfully.')
+        await onRefresh()
+      }
+      setForm({ ...form, name: '', email: '', password: '', gender: '', dateOfBirth: '', dateJoined: getToday() })
     } catch (createError) {
       setError(createError.message)
     } finally {
@@ -528,31 +565,140 @@ function UsersSection({ data, user, token, onRefresh, onPhotoUpdated }) {
     }
   }
 
-  async function deleteUser(account) {
-    if (!window.confirm(`Delete ${account.name}'s account? Existing assessment records will be kept.`)) return
-    setDeleteError('')
-    setDeleteMessage('')
-    setDeletingId(account.id)
+  const canCreateStudent = isAdmin || (user.role === 'teacher' && user.isFormTeacher)
+  const invalidTeacherClass = user.role === 'teacher' && !allowedClasses.includes(form.className)
+
+  return (
+    <>
+      <SectionTitle
+        eyebrow={isAdmin ? 'Administration' : 'Form teacher'}
+        title="Create account"
+        action={<button type="button" onClick={onBack} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-white">Back</button>}
+      />
+      {!canCreateStudent ? <EmptyState>Only an admin or a designated form teacher can create student accounts.</EmptyState> : (
+        <Panel title={isAdmin ? 'New school account' : 'Request a student account'}>
+          <form onSubmit={createAccount} className="grid gap-4 p-5 md:grid-cols-2">
+            <label className="block text-sm font-semibold text-slate-700">Full name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="portal-input" placeholder="Full name" /></label>
+            <label className="block text-sm font-semibold text-slate-700">Email address<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="portal-input" placeholder="name@school.com" /></label>
+            {isAdmin && <label className="block text-sm font-semibold text-slate-700">Role<select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} className="portal-input"><option value="student">Student</option><option value="teacher">Teacher</option></select></label>}
+            <label className="block text-sm font-semibold text-slate-700">Class
+              {user.role === 'teacher'
+                ? <select required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input">{allowedClasses.map((className) => <option key={className} value={className}>{className}</option>)}</select>
+                : <input required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} list="portal-create-classes" className="portal-input" placeholder="Class name" />}
+            </label>
+            {isAdmin && <datalist id="portal-create-classes">{allClasses.map((className) => <option key={className} value={className} />)}</datalist>}
+            {form.role === 'teacher' && <label className="block text-sm font-semibold text-slate-700">Teaching subject<input required value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input" placeholder="e.g. Mathematics" /></label>}
+            {form.role === 'student' && <>
+              <label className="block text-sm font-semibold text-slate-700">Gender<select required value={form.gender} onChange={(event) => setForm({ ...form, gender: event.target.value })} className="portal-input"><option value="" disabled>Select gender</option><option value="male">Male</option><option value="female">Female</option></select></label>
+              <label className="block text-sm font-semibold text-slate-700">Date of birth<input required type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} className="portal-input" /></label>
+              <label className="block text-sm font-semibold text-slate-700">Date joined<input required type="date" value={form.dateJoined} onChange={(event) => setForm({ ...form, dateJoined: event.target.value })} className="portal-input" /></label>
+            </>}
+            <label className="block text-sm font-semibold text-slate-700">Temporary password<input required minLength="8" maxLength="100" type="password" autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="portal-input" placeholder="At least 8 characters" /></label>
+            {user.role === 'teacher' && <p className="text-sm leading-6 text-slate-500 md:col-span-2">Student account requests are reviewed by an administrator before the account is created.</p>}
+            {error && <p role="alert" className="text-sm text-rose-700 md:col-span-2">{error}</p>}
+            {message && <p role="status" className="text-sm text-emerald-700 md:col-span-2">{message}</p>}
+            <div className="md:col-span-2"><button disabled={busy || invalidTeacherClass || (user.role === 'teacher' && !allowedClasses.length)} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{busy ? 'Submitting…' : user.role === 'teacher' ? 'Request student account' : 'Create account'}</button></div>
+          </form>
+        </Panel>
+      )}
+    </>
+  )
+}
+
+function EditAccountDialog({ account, user, token, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: account.name || '',
+    email: account.email || '',
+    className: account.className || '',
+    subject: account.subject || '',
+    gender: account.gender || '',
+    dateOfBirth: account.dateOfBirth || '',
+    dateJoined: account.dateJoined || '',
+  })
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function saveAccount(event) {
+    event.preventDefault()
+    setError('')
+    setBusy(true)
+    const body = { name: form.name, email: form.email }
+    if (account.role !== 'admin') body.className = form.className
+    if (account.role === 'teacher') body.subject = form.subject
+    if (account.role === 'student') {
+      body.gender = form.gender
+      body.dateOfBirth = form.dateOfBirth
+      body.dateJoined = form.dateJoined
+    }
     try {
-      await request(`/api/users/${encodeURIComponent(account.id)}`, { token, method: 'DELETE' })
-      setDeleteMessage(`${account.name}'s account was deleted.`)
-      await onRefresh()
-    } catch (deleteError) {
-      setDeleteError(deleteError.message)
+      const result = await request(`/api/users/${encodeURIComponent(account.id)}`, {
+        token,
+        method: 'PUT',
+        body: JSON.stringify(body),
+      })
+      await onSaved(Boolean(result.approval))
+    } catch (saveError) {
+      setError(saveError.message)
     } finally {
-      setDeletingId('')
+      setBusy(false)
     }
   }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+      <section role="dialog" aria-modal="true" aria-labelledby="edit-account-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div><h2 id="edit-account-title" className="font-slab text-xl font-bold text-slate-900">Edit account</h2><p className="mt-1 text-sm text-slate-500">{account.name} · {account.role}</p></div>
+          <button type="button" onClick={onClose} aria-label="Close edit account form" className="rounded-lg px-2 py-1 text-xl text-slate-500 hover:bg-slate-100">×</button>
+        </div>
+        <form onSubmit={saveAccount} className="mt-5 grid gap-4 md:grid-cols-2">
+          <label className="block text-sm font-semibold text-slate-700">Full name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="portal-input" /></label>
+          <label className="block text-sm font-semibold text-slate-700">Email<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="portal-input" /></label>
+          {account.role !== 'admin' && <label className="block text-sm font-semibold text-slate-700">Class<input required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" /></label>}
+          {account.role === 'teacher' && <label className="block text-sm font-semibold text-slate-700">Subject<input required value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input" /></label>}
+          {account.role === 'student' && <>
+            <label className="block text-sm font-semibold text-slate-700">Gender<select value={form.gender} onChange={(event) => setForm({ ...form, gender: event.target.value })} className="portal-input"><option value="">Not set</option><option value="male">Male</option><option value="female">Female</option></select></label>
+            <label className="block text-sm font-semibold text-slate-700">Date of birth<input type="date" value={form.dateOfBirth} onChange={(event) => setForm({ ...form, dateOfBirth: event.target.value })} className="portal-input" /></label>
+            <label className="block text-sm font-semibold text-slate-700">Date joined<input type="date" value={form.dateJoined} onChange={(event) => setForm({ ...form, dateJoined: event.target.value })} className="portal-input" /></label>
+          </>}
+          {user.role === 'teacher' && <p className="text-sm text-slate-500 md:col-span-2">This edit will be sent to an administrator for approval.</p>}
+          {error && <p role="alert" className="text-sm text-rose-700 md:col-span-2">{error}</p>}
+          <div className="flex justify-end gap-3 md:col-span-2"><button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600">Cancel</button><button disabled={busy} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{busy ? 'Saving…' : user.role === 'teacher' ? 'Request edit' : 'Save changes'}</button></div>
+        </form>
+      </section>
+    </div>
+  )
+}
+
+function UsersSection({ data, user, token, onRefresh, setSection, onPhotoUpdated }) {
+  const [sortBy, setSortBy] = useState('number')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [resetPasswords, setResetPasswords] = useState({})
+  const [resettingId, setResettingId] = useState('')
+  const [notice, setNotice] = useState('')
+  const [error, setError] = useState('')
+  const [photoVersions, setPhotoVersions] = useState({})
+  const [photoBusyId, setPhotoBusyId] = useState('')
+  const [editingAccount, setEditingAccount] = useState(null)
+  const [deletingId, setDeletingId] = useState('')
+
+  const numberedUsers = data.users.map((account, index) => ({ ...account, accountNumber: index + 1 }))
+  const sortedUsers = [...numberedUsers].sort((a, b) => sortBy === 'number'
+    ? a.accountNumber - b.accountNumber
+    : String(a[sortBy] || '').localeCompare(String(b[sortBy] || ''), undefined, { numeric: true, sensitivity: 'base' }))
+  const pageCount = Math.max(1, Math.ceil(sortedUsers.length / pageSize))
+  const activePage = Math.min(page, pageCount)
+  const visibleUsers = sortedUsers.slice((activePage - 1) * pageSize, activePage * pageSize)
 
   async function resetPassword(account) {
     const newPassword = resetPasswords[account.id] || ''
     if (newPassword.length < 8) {
-      setResetError('Enter a temporary password with at least 8 characters.')
-      setResetMessage('')
+      setError('Enter a temporary password with at least 8 characters.')
       return
     }
-    setResetError('')
-    setResetMessage('')
+    setError('')
+    setNotice('')
     setResettingId(account.id)
     try {
       await request(`/api/users/${encodeURIComponent(account.id)}/reset-password`, {
@@ -561,113 +707,343 @@ function UsersSection({ data, user, token, onRefresh, onPhotoUpdated }) {
         body: JSON.stringify({ newPassword }),
       })
       setResetPasswords({ ...resetPasswords, [account.id]: '' })
-      setResetMessage(`Password reset for ${account.name}.`)
+      setNotice(`Password reset for ${account.name}.`)
     } catch (resetError) {
-      setResetError(resetError.message)
+      setError(resetError.message)
     } finally {
       setResettingId('')
     }
   }
 
-  async function uploadPhoto(student, file) {
-    setPhotoError('')
-    setPhotoBusyId(student.id)
+  async function uploadPhoto(account, file) {
+    setError('')
+    setNotice('')
+    setPhotoBusyId(account.id)
     try {
-      await uploadProfilePhoto(token, student.id, file)
-      setPhotoVersions({ ...photoVersions, [student.id]: (photoVersions[student.id] || 0) + 1 })
-      if (student.id === user.id) onPhotoUpdated()
+      await uploadProfilePhoto(token, account.id, file)
+      setPhotoVersions((versions) => ({ ...versions, [account.id]: (versions[account.id] || 0) + 1 }))
+      if (account.id === user.id) onPhotoUpdated()
+      setNotice(`Profile photo updated for ${account.name}.`)
     } catch (uploadError) {
-      setPhotoError(uploadError.message)
+      setError(uploadError.message)
     } finally {
       setPhotoBusyId('')
     }
   }
 
-  async function saveFormTeacherClasses(event) {
-    event.preventDefault()
-    setAssignmentError('')
-    setAssignmentMessage('')
-    setAssignmentBusy(true)
+  async function deleteUser(account) {
+    if (!window.confirm(`Delete ${account.name}'s account? Existing assessment records will be kept.`)) return
+    setError('')
+    setNotice('')
+    setDeletingId(account.id)
     try {
-      await request(`/api/users/${encodeURIComponent(selectedTeacherId)}/form-teacher-classes`, {
-        token,
-        method: 'PUT',
-        body: JSON.stringify({ classNames: selectedClasses }),
-      })
-      setAssignmentMessage('Form-teacher assignments saved.')
+      await request(`/api/users/${encodeURIComponent(account.id)}`, { token, method: 'DELETE' })
+      setNotice(`${account.name}'s account was deleted.`)
       await onRefresh()
-    } catch (saveError) {
-      setAssignmentError(saveError.message)
+    } catch (deleteError) {
+      setError(deleteError.message)
     } finally {
-      setAssignmentBusy(false)
+      setDeletingId('')
     }
   }
 
-  function chooseTeacher(teacherId) {
-    const selected = teachers.find((teacher) => teacher.id === teacherId)
-    setSelectedTeacherId(teacherId)
-    setSelectedClasses(selected?.formTeacherClassNames || [])
+  function exportAccounts() {
+    const headers = ['Number', 'Name', 'Email', 'Role', 'Form teacher', 'Class', 'Subject', 'Gender', 'Date of birth', 'Date joined']
+    const rows = sortedUsers.map((account) => [
+      account.accountNumber,
+      account.name,
+      account.email,
+      account.role,
+      account.isFormTeacher ? 'Yes' : 'No',
+      account.className,
+      account.subject,
+      account.gender,
+      account.dateOfBirth,
+      account.dateJoined,
+    ])
+    downloadCsv('school-accounts.csv', headers, rows)
   }
 
-  const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId)
-  const assignableClasses = classes.filter((className) => className !== selectedTeacher?.className)
+  async function accountSaved(isPending) {
+    setEditingAccount(null)
+    setError('')
+    setNotice(isPending ? 'Edit request submitted for admin approval.' : 'Account updated successfully.')
+    if (!isPending) await onRefresh()
+  }
 
   return (
     <>
-      <SectionTitle eyebrow={isAdmin ? 'Administration' : 'Classroom'} title={isAdmin ? 'Manage school accounts' : 'My students'} />
-      <div className={`grid items-start gap-5 ${isAdmin ? 'xl:grid-cols-[.8fr_1.2fr]' : 'xl:grid-cols-1'}`}>
-        <Panel title={isAdmin ? 'Create an account' : 'Create a student account'}>
-          <form onSubmit={createUser} className="space-y-4 p-5">
-            <label className="block text-sm font-semibold text-slate-700">Full name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="portal-input" placeholder="Full name" /></label>
-            <label className="block text-sm font-semibold text-slate-700">Email address<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="portal-input" placeholder="name@school.com" /></label>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {isAdmin ? <label className="block text-sm font-semibold text-slate-700">Role<select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} className="portal-input"><option value="student">Student</option><option value="teacher">Teacher</option></select></label> : <p className="flex items-center rounded-xl bg-slate-50 px-3 text-sm font-semibold text-slate-600">Account type: Student</p>}
-              <label className="block text-sm font-semibold text-slate-700">Class<input required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} list="portal-account-classes" className="portal-input" placeholder="Year 10" /></label>
-            </div>
-            {form.role === 'teacher' && <label className="block text-sm font-semibold text-slate-700">Teaching subject<input required value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input" placeholder="e.g. Mathematics" /></label>}
-            {isAdmin && <datalist id="portal-account-classes">{classes.map((className) => <option key={className} value={className} />)}</datalist>}
-            {!isAdmin && <p className="text-xs leading-5 text-slate-500">You can create student accounts only for your assigned class. Student accounts cannot change their own marks.</p>}
-            <label className="block text-sm font-semibold text-slate-700">Temporary password<input required minLength="8" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="portal-input" placeholder="At least 8 characters" /></label>
-            {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
-            {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
-            <button disabled={busy || (!isAdmin && (!allowedTeacherClasses.length || !allowedTeacherClasses.includes(form.className)))} className="w-full rounded-xl bg-slate-900 px-4 py-3 font-bold text-white hover:bg-slate-700 disabled:opacity-60">{busy ? 'Creating…' : 'Create account'}</button>
-          </form>
-        </Panel>
-        {isAdmin && <Panel title={`All accounts · ${data.users.length}`}>
-          {deleteError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{deleteError}</p>}
-          {deleteMessage && <p role="status" className="px-5 pt-4 text-sm text-emerald-700">{deleteMessage}</p>}
-          {resetError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{resetError}</p>}
-          {resetMessage && <p role="status" className="px-5 pt-4 text-sm text-emerald-700">{resetMessage}</p>}
-          {photoError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{photoError}</p>}
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Name</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Class</th><th className="px-5 py-3">Subject</th><th className="px-5 py-3">Actions</th></tr></thead>
-              <tbody className="divide-y divide-slate-100">{data.users.map((account) => <tr key={account.id}><td className="px-5 py-4"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={account.id} name={account.name} refreshKey={photoVersions[account.id] || 0} className="h-9 w-9 shrink-0 text-[10px]" /><span className="font-semibold text-slate-800">{account.name}</span></span></td><td className="px-5 py-4 text-slate-500">{account.email}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold capitalize text-slate-600">{account.role}</span></td><td className="px-5 py-4 text-slate-500">{account.className || '—'}</td><td className="px-5 py-4 text-slate-500">{account.subject || '—'}</td><td className="px-5 py-4"><div className="space-y-2">
-                <label className="block cursor-pointer text-xs font-bold text-emerald-700">{photoBusyId === account.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === account.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(account, file); event.target.value = '' }} className="sr-only" /></label>
-                <div className="flex gap-1"><input aria-label={`Temporary password for ${account.name}`} type="password" minLength="8" value={resetPasswords[account.id] || ''} onChange={(event) => setResetPasswords({ ...resetPasswords, [account.id]: event.target.value })} className="w-32 rounded-md border border-slate-200 px-2 py-1 text-xs" placeholder="New password" /><button disabled={resettingId === account.id} onClick={() => void resetPassword(account)} className="text-xs font-bold text-sky-700 disabled:opacity-60">{resettingId === account.id ? 'Resetting…' : 'Reset'}</button></div>
-                <button disabled={account.role === 'admin' || deletingId === account.id} onClick={() => deleteUser(account)} className="text-xs font-bold text-rose-700 hover:text-rose-900 disabled:cursor-not-allowed disabled:opacity-40">{deletingId === account.id ? 'Deleting…' : account.role === 'admin' ? 'Protected' : 'Delete account'}</button>
-              </div></td></tr>)}</tbody>
-            </table>
+      <SectionTitle eyebrow="Administration" title="All accounts" action={<div className="flex flex-wrap gap-2">
+        <button type="button" onClick={exportAccounts} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-white">Download CSV</button>
+        <button type="button" onClick={() => setSection('create-account')} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-700">Create account</button>
+      </div>} />
+      {error && <p role="alert" className="mb-4 text-sm text-rose-700">{error}</p>}
+      {notice && <p role="status" className="mb-4 text-sm text-emerald-700">{notice}</p>}
+      <Panel title={`${data.users.length} account${data.users.length === 1 ? '' : 's'}`} action={<label className="text-sm font-semibold text-slate-600">Sort by<select value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1) }} className="ml-2 rounded-lg border border-slate-200 px-3 py-2"><option value="number">Number</option><option value="name">Name</option><option value="role">Role</option><option value="className">Class</option></select></label>}>
+        {!visibleUsers.length ? <div className="p-5"><EmptyState>No accounts have been created yet.</EmptyState></div> : <div className="overflow-x-auto">
+          <table className="w-full min-w-[1100px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">No.</th><th className="px-4 py-3">Account</th><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Class</th><th className="px-4 py-3">Gender / DOB</th><th className="px-4 py-3">Joined</th><th className="px-4 py-3">Actions</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">{visibleUsers.map((account, index) => <tr key={account.id}>
+              <td className="px-4 py-4 font-semibold text-slate-500">{(activePage - 1) * pageSize + index + 1}</td>
+              <td className="px-4 py-4"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={account.id} name={account.name} refreshKey={photoVersions[account.id] || 0} className="h-9 w-9 shrink-0 text-[10px]" /><span className="font-semibold text-slate-800">{account.name}</span></span></td>
+              <td className="px-4 py-4 text-slate-500">{account.email}</td>
+              <td className="px-4 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold capitalize text-slate-600">{account.role}</span>{account.role === 'teacher' && account.isFormTeacher && <span className="ml-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-800">Form teacher</span>}</td>
+              <td className="px-4 py-4 text-slate-500">{account.className || '—'}{account.subject ? <span className="block text-xs">{account.subject}</span> : null}</td>
+              <td className="px-4 py-4 text-slate-500">{account.role === 'student' ? <>{account.gender || '—'}<span className="block text-xs">{account.dateOfBirth || 'DOB not set'}</span></> : '—'}</td>
+              <td className="px-4 py-4 text-slate-500">{account.role === 'student' ? account.dateJoined || '—' : '—'}</td>
+              <td className="px-4 py-4"><div className="flex min-w-40 flex-col items-start gap-2">
+                <button type="button" onClick={() => setEditingAccount(account)} className="text-xs font-bold text-sky-700">Edit account</button>
+                <label className="cursor-pointer text-xs font-bold text-emerald-700">{photoBusyId === account.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === account.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(account, file); event.target.value = '' }} className="sr-only" /></label>
+                <div className="flex gap-1"><input aria-label={`New password for ${account.name}`} type="password" minLength="8" value={resetPasswords[account.id] || ''} onChange={(event) => setResetPasswords({ ...resetPasswords, [account.id]: event.target.value })} className="w-28 rounded-md border border-slate-200 px-2 py-1 text-xs" placeholder="New password" /><button type="button" disabled={resettingId === account.id} onClick={() => void resetPassword(account)} className="text-xs font-bold text-indigo-700 disabled:opacity-60">{resettingId === account.id ? 'Resetting…' : 'Reset'}</button></div>
+                <button type="button" disabled={account.id === user.id || deletingId === account.id} onClick={() => void deleteUser(account)} className="text-xs font-bold text-rose-700 disabled:opacity-40">{deletingId === account.id ? 'Deleting…' : account.id === user.id ? 'Current account' : 'Delete account'}</button>
+              </div></td>
+            </tr>)}</tbody>
+          </table>
+        </div>}
+        <PaginationControls page={activePage} pageCount={pageCount} onPageChange={setPage} pageSize={pageSize} onPageSizeChange={(size) => { setPageSize(size); setPage(1) }} total={sortedUsers.length} />
+      </Panel>
+      {editingAccount && <EditAccountDialog account={editingAccount} user={user} token={token} onClose={() => setEditingAccount(null)} onSaved={accountSaved} />}
+    </>
+  )
+}
+
+function StudentsSection({ data, user, token, setSection, onRefresh, onPhotoUpdated }) {
+  const [sortBy, setSortBy] = useState('number')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [editingStudent, setEditingStudent] = useState(null)
+  const [photoBusyId, setPhotoBusyId] = useState('')
+  const [photoVersions, setPhotoVersions] = useState({})
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const numberedStudents = data.students.map((student, index) => ({ ...student, rosterNumber: index + 1 }))
+  const sortedStudents = [...numberedStudents].sort((a, b) => sortBy === 'number'
+    ? a.rosterNumber - b.rosterNumber
+    : String(a[sortBy] || '').localeCompare(String(b[sortBy] || ''), undefined, { numeric: true, sensitivity: 'base' }))
+  const pageCount = Math.max(1, Math.ceil(sortedStudents.length / pageSize))
+  const activePage = Math.min(page, pageCount)
+  const visibleStudents = sortedStudents.slice((activePage - 1) * pageSize, activePage * pageSize)
+
+  async function uploadPhoto(student, file) {
+    setError('')
+    setNotice('')
+    setPhotoBusyId(student.id)
+    try {
+      const result = await uploadProfilePhoto(token, student.id, file)
+      if (result.approval) {
+        setNotice(`Photo update for ${student.name} was sent for admin approval.`)
+      } else {
+        setPhotoVersions((versions) => ({ ...versions, [student.id]: (versions[student.id] || 0) + 1 }))
+        if (student.id === user.id) onPhotoUpdated()
+        setNotice(`Profile photo updated for ${student.name}.`)
+      }
+    } catch (uploadError) {
+      setError(uploadError.message)
+    } finally {
+      setPhotoBusyId('')
+    }
+  }
+
+  async function studentSaved(isPending) {
+    setEditingStudent(null)
+    setError('')
+    setNotice(isPending ? 'Student edit request submitted for admin approval.' : 'Student account updated.')
+    if (!isPending) await onRefresh()
+  }
+
+  function exportStudents() {
+    const headers = ['Number', 'Name', 'Email', 'Class', 'Gender', 'Date of birth', 'Date joined']
+    const rows = sortedStudents.map((student) => [
+      student.rosterNumber,
+      student.name,
+      student.email,
+      student.className,
+      student.gender,
+      student.dateOfBirth,
+      student.dateJoined,
+    ])
+    downloadCsv('students-in-assigned-classes.csv', headers, rows)
+  }
+
+  return (
+    <>
+      <SectionTitle eyebrow="Classroom" title="Students in assigned classes" action={<div className="flex flex-wrap gap-2">
+        <button type="button" onClick={exportStudents} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-white">Download CSV</button>
+        {user.isFormTeacher && <button type="button" onClick={() => setSection('create-account')} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-700">Create student</button>}
+      </div>} />
+      {error && <p role="alert" className="mb-4 text-sm text-rose-700">{error}</p>}
+      {notice && <p role="status" className="mb-4 text-sm text-emerald-700">{notice}</p>}
+      <Panel title={`${data.students.length} student${data.students.length === 1 ? '' : 's'}`} action={<label className="text-sm font-semibold text-slate-600">Sort by<select value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1) }} className="ml-2 rounded-lg border border-slate-200 px-3 py-2"><option value="number">Number</option><option value="name">Name</option><option value="className">Class</option><option value="email">Email</option></select></label>}>
+        {!visibleStudents.length ? <div className="p-5"><EmptyState>No students are currently assigned to your classes.</EmptyState></div> : <div className="overflow-x-auto">
+          <table className="w-full min-w-[1000px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">No.</th><th className="px-4 py-3">Student</th><th className="px-4 py-3">Class</th><th className="px-4 py-3">Gender</th><th className="px-4 py-3">Date of birth</th><th className="px-4 py-3">Date joined</th><th className="px-4 py-3">Actions</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">{visibleStudents.map((student, index) => <tr key={student.id}>
+              <td className="px-4 py-4 font-semibold text-slate-500">{(activePage - 1) * pageSize + index + 1}</td>
+              <td className="px-4 py-4"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={student.id} name={student.name} refreshKey={photoVersions[student.id] || 0} className="h-10 w-10 shrink-0 text-xs" /><span><span className="block font-semibold text-slate-800">{student.name}</span><span className="text-xs text-slate-500">{student.email}</span></span></span></td>
+              <td className="px-4 py-4 text-slate-600">{student.className}</td>
+              <td className="px-4 py-4 capitalize text-slate-600">{student.gender || '—'}</td>
+              <td className="px-4 py-4 text-slate-600">{student.dateOfBirth || '—'}</td>
+              <td className="px-4 py-4 text-slate-600">{student.dateJoined || '—'}</td>
+              <td className="px-4 py-4"><div className="flex gap-3">
+                {user.isFormTeacher && <button type="button" onClick={() => setEditingStudent(student)} className="text-xs font-bold text-sky-700">Edit</button>}
+                <label className="cursor-pointer text-xs font-bold text-emerald-700">{photoBusyId === student.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === student.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(student, file); event.target.value = '' }} className="sr-only" /></label>
+              </div></td>
+            </tr>)}</tbody>
+          </table>
+        </div>}
+        <PaginationControls page={activePage} pageCount={pageCount} onPageChange={setPage} pageSize={pageSize} onPageSizeChange={(size) => { setPageSize(size); setPage(1) }} total={sortedStudents.length} />
+      </Panel>
+      {editingStudent && <EditAccountDialog account={editingStudent} user={user} token={token} onClose={() => setEditingStudent(null)} onSaved={studentSaved} />}
+    </>
+  )
+}
+
+function FormTeachersSection({ data, token, onRefresh }) {
+  const teachers = data.users.filter((account) => account.role === 'teacher')
+  const classes = [...new Set([
+    ...data.students.map((student) => student.className),
+    ...data.users.map((account) => account.className),
+  ].filter(Boolean))]
+  const [teacherId, setTeacherId] = useState(teachers[0]?.id || '')
+  const [isFormTeacher, setIsFormTeacher] = useState(teachers[0]?.isFormTeacher || false)
+  const [classNames, setClassNames] = useState(teachers[0]?.formTeacherClassNames || [])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const teacher = teachers.find((account) => account.id === teacherId)
+  const assignableClasses = classes.filter((className) => className !== teacher?.className)
+
+  function chooseTeacher(id) {
+    const nextTeacher = teachers.find((account) => account.id === id)
+    setTeacherId(id)
+    setIsFormTeacher(Boolean(nextTeacher?.isFormTeacher))
+    setClassNames(nextTeacher?.formTeacherClassNames || [])
+    setError('')
+    setMessage('')
+  }
+
+  async function saveAssignments(event) {
+    event.preventDefault()
+    setError('')
+    setMessage('')
+    setBusy(true)
+    try {
+      await request(`/api/users/${encodeURIComponent(teacherId)}/form-teacher-classes`, {
+        token,
+        method: 'PUT',
+        body: JSON.stringify({ isFormTeacher, classNames: isFormTeacher ? classNames : [] }),
+      })
+      setMessage(isFormTeacher ? 'Form-teacher role and classes saved.' : 'Form-teacher role removed.')
+      await onRefresh()
+    } catch (saveError) {
+      setError(saveError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <SectionTitle eyebrow="Administration" title="Assign form-teacher role" />
+      {!teachers.length ? <EmptyState>Create a teacher account before assigning the form-teacher role.</EmptyState> : <Panel title="Form-teacher assignment">
+        <form onSubmit={saveAssignments} className="space-y-5 p-5">
+          <label className="block text-sm font-semibold text-slate-700">Teacher<select value={teacherId} onChange={(event) => chooseTeacher(event.target.value)} className="portal-input">{teachers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.className || 'No primary class'}</option>)}</select></label>
+          <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-4 text-sm">
+            <input type="checkbox" checked={isFormTeacher} onChange={(event) => { setIsFormTeacher(event.target.checked); if (!event.target.checked) setClassNames([]) }} className="mt-1 h-4 w-4 accent-emerald-700" />
+            <span><span className="block font-bold text-slate-800">Designate as form teacher</span><span className="mt-1 block text-slate-500">Form teachers can request student account creation and edits. The teacher’s primary class remains accessible independently.</span></span>
+          </label>
+          {isFormTeacher && <fieldset><legend className="text-sm font-semibold text-slate-700">Additional form-teacher classes</legend>
+            {assignableClasses.length ? <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{assignableClasses.map((className) => <label key={className} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={classNames.includes(className)} onChange={(event) => setClassNames(event.target.checked ? [...classNames, className] : classNames.filter((name) => name !== className))} />{className}</label>)}</div> : <p className="mt-2 text-sm text-slate-500">No additional classes are available. The primary class remains included.</p>}
+          </fieldset>}
+          {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
+          {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
+          <button disabled={busy} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{busy ? 'Saving…' : 'Save role and classes'}</button>
+        </form>
+      </Panel>}
+    </>
+  )
+}
+
+function ApprovalsSection({ token }) {
+  const [approvals, setApprovals] = useState([])
+  const [filter, setFilter] = useState('pending')
+  const [notes, setNotes] = useState({})
+  const [busyId, setBusyId] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+
+  const loadApprovals = useCallback(async () => {
+    setError('')
+    try {
+      const result = await request('/api/approvals', { token })
+      setApprovals(result.approvals)
+    } catch (loadError) {
+      setError(loadError.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => { void loadApprovals() }, [loadApprovals])
+
+  async function review(approval, decision) {
+    setBusyId(approval.id)
+    setError('')
+    setMessage('')
+    try {
+      const result = await request(`/api/approvals/${encodeURIComponent(approval.id)}/decision`, {
+        token,
+        method: 'POST',
+        body: JSON.stringify({ decision, note: notes[approval.id] || '' }),
+      })
+      setMessage(result.approval.status === 'approved'
+        ? 'Request approved and applied.'
+        : result.approval.status === 'rejected'
+          ? 'Request disapproved.'
+          : `Request could not be applied: ${result.approval.error}`)
+      if (result.approval.status === 'failed') setFilter('all')
+      await loadApprovals()
+    } catch (reviewError) {
+      setError(reviewError.message)
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  const visibleApprovals = approvals.filter((approval) => filter === 'all' || approval.status === filter)
+  const statusStyles = {
+    pending: 'bg-amber-50 text-amber-800',
+    processing: 'bg-sky-50 text-sky-800',
+    approved: 'bg-emerald-50 text-emerald-800',
+    rejected: 'bg-rose-50 text-rose-800',
+    failed: 'bg-rose-50 text-rose-800',
+  }
+
+  return (
+    <>
+      <SectionTitle eyebrow="Administration" title="Teacher approvals" action={<div className="flex items-center gap-2">
+        <label className="text-sm font-semibold text-slate-600">View<select value={filter} onChange={(event) => setFilter(event.target.value)} className="ml-2 rounded-lg border border-slate-200 px-3 py-2"><option value="pending">Pending</option><option value="all">All requests</option><option value="approved">Approved</option><option value="rejected">Disapproved</option><option value="failed">Failed</option></select></label>
+        <button type="button" onClick={() => void loadApprovals()} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600">Refresh</button>
+      </div>} />
+      {error && <p role="alert" className="mb-4 text-sm text-rose-700">{error}</p>}
+      {message && <p role="status" className="mb-4 text-sm text-emerald-700">{message}</p>}
+      {loading ? <p className="text-sm text-slate-500">Loading approval requests…</p> : !visibleApprovals.length ? <EmptyState>No {filter === 'all' ? '' : `${filter} `}teacher requests.</EmptyState> : <div className="space-y-4">
+        {visibleApprovals.map((approval) => <Panel key={approval.id} title={approval.title} action={<span className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${statusStyles[approval.status] || 'bg-slate-100 text-slate-600'}`}>{approval.status}</span>}>
+          <div className="space-y-4 p-5">
+            <p className="text-sm text-slate-600">Requested by <span className="font-semibold text-slate-800">{approval.actorName}</span>{approval.actorEmail ? ` · ${approval.actorEmail}` : ''} · {new Date(approval.createdAt).toLocaleString()}<span className="mt-1 block text-xs text-slate-400">{approval.method} {approval.path}</span></p>
+            <details className="rounded-xl border border-slate-200 p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-700">View request details</summary>
+              <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-xs text-slate-700">{JSON.stringify(approval.body, null, 2)}</pre>
+            </details>
+            {approval.error && <p role="alert" className="text-sm text-rose-700">{approval.error}</p>}
+            {approval.decisionNote && <p className="text-sm text-slate-600">Admin note: {approval.decisionNote}</p>}
+            {approval.status === 'pending' && <div className="space-y-3">
+              <label className="block text-sm font-semibold text-slate-700">Review note (optional)<input value={notes[approval.id] || ''} onChange={(event) => setNotes({ ...notes, [approval.id]: event.target.value })} className="portal-input" placeholder="Reason for approval or disapproval" /></label>
+              <div className="flex gap-2"><button type="button" disabled={busyId === approval.id} onClick={() => void review(approval, 'approve')} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{busyId === approval.id ? 'Reviewing…' : 'Approve'}</button><button type="button" disabled={busyId === approval.id} onClick={() => void review(approval, 'reject')} className="rounded-lg border border-rose-200 px-4 py-2 text-sm font-bold text-rose-700 disabled:opacity-60">Disapprove</button></div>
+            </div>}
           </div>
-        </Panel>}
-        {!isAdmin && <Panel title={`Students in assigned classes · ${data.students.length}`}>
-          {photoError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{photoError}</p>}
-          {!data.students.length ? <div className="p-5"><EmptyState>No students are currently assigned to your classes.</EmptyState></div> : <div className="divide-y divide-slate-100">{data.students.map((student) => <div key={student.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={student.id} name={student.name} refreshKey={photoVersions[student.id] || 0} className="h-11 w-11 shrink-0 text-xs" /><span><span className="block font-semibold text-slate-800">{student.name}</span><span className="text-xs text-slate-500">{student.email} · {student.className}</span></span></span><label className="cursor-pointer rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">{photoBusyId === student.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === student.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(student, file); event.target.value = '' }} className="sr-only" /></label></div>)}</div>}
-        </Panel>}
-      </div>
-      {isAdmin && <div className="mt-5">
-        <Panel title="Assign form teachers">
-          {!teachers.length ? <div className="p-5"><EmptyState>Create a teacher account before assigning a form class.</EmptyState></div> : <form onSubmit={saveFormTeacherClasses} className="space-y-4 p-5">
-            <label className="block text-sm font-semibold text-slate-700">Teacher<select value={selectedTeacherId} onChange={(event) => chooseTeacher(event.target.value)} className="portal-input">{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name} · {teacher.className || 'No primary class'}</option>)}</select></label>
-            {assignableClasses.length ? <fieldset><legend className="text-sm font-semibold text-slate-700">Form-teacher classes</legend><div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{assignableClasses.map((className) => {
-              const checked = selectedClasses.includes(className)
-              return <label key={className} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"><input type="checkbox" checked={checked} onChange={(event) => setSelectedClasses(event.target.checked ? [...selectedClasses, className] : selectedClasses.filter((item) => item !== className))} />{className}</label>
-            })}</div></fieldset> : classes.length
-              ? <p className="text-sm text-slate-500">The teacher’s primary class is already included in their access; no additional classes are available to assign.</p>
-              : <p className="text-sm text-slate-500">Add student or teacher accounts with class names before assigning form classes.</p>}
-            <div className="flex flex-wrap items-center gap-3"><button disabled={assignmentBusy} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{assignmentBusy ? 'Saving…' : 'Save class assignments'}</button>{assignmentError && <p role="alert" className="text-sm text-rose-700">{assignmentError}</p>}{assignmentMessage && <p role="status" className="text-sm text-emerald-700">{assignmentMessage}</p>}</div>
-          </form>}
-        </Panel>
+        </Panel>)}
       </div>}
     </>
   )
@@ -696,7 +1072,7 @@ function AttendanceSection({ data, user, token, onRefresh }) {
     setMessage('')
     setBusy(true)
     try {
-      await request('/api/attendance', {
+      const result = await request('/api/attendance', {
         token,
         method: 'POST',
         body: JSON.stringify({
@@ -705,7 +1081,7 @@ function AttendanceSection({ data, user, token, onRefresh }) {
           entries: classStudents.map((student) => ({ studentId: student.id, present: present[student.id] })),
         }),
       })
-      setMessage('Attendance saved.')
+      setMessage(result.approval ? 'Attendance request submitted for admin approval.' : 'Attendance saved.')
       await onRefresh()
     } catch (saveError) {
       setError(saveError.message)
@@ -779,12 +1155,12 @@ function AssignmentsSection({ data, user, token, onRefresh, registerAttemptSubmi
     setMessage('')
     setBusy(true)
     try {
-      await request('/api/assignments', {
+      const result = await request('/api/assignments', {
         token,
         method: 'POST',
         body: JSON.stringify({ ...form, dueDate: new Date(form.dueDate).toISOString() }),
       })
-      setMessage('Assignment shared with the class.')
+      setMessage(result.approval ? 'Assignment request submitted for admin approval.' : 'Assignment shared with the class.')
       setForm({
         title: '',
         description: '',
@@ -996,7 +1372,7 @@ function ExamsSection({ data, user, token, onRefresh, registerAttemptSubmit }) {
     setMessage('')
     setBusy(true)
     try {
-      await request('/api/exams', {
+      const result = await request('/api/exams', {
         token,
         method: 'POST',
         body: JSON.stringify({
@@ -1008,7 +1384,7 @@ function ExamsSection({ data, user, token, onRefresh, registerAttemptSubmit }) {
           questions: form.questions,
         }),
       })
-      setMessage('Exam published. Students in this class can now take it.')
+      setMessage(result.approval ? 'Exam request submitted for admin approval.' : 'Exam published. Students in this class can now take it.')
       setForm({ title: '', className: user.className || 'Year 10', subject: user.subject || '', dueDate: '', durationMinutes: 30, questions: [{ text: '', options: ['', '', '', ''], correctIndex: 0 }] })
       await onRefresh()
     } catch (createError) {
@@ -1177,8 +1553,8 @@ function AssessmentsSection({ data, user, token, onRefresh }) {
     setMessage('')
     setBusy(true)
     try {
-      await request('/api/assessments', { token, method: 'POST', body: JSON.stringify(form) })
-      setMessage('Assessment added to the subject gradebook.')
+      const result = await request('/api/assessments', { token, method: 'POST', body: JSON.stringify(form) })
+      setMessage(result.approval ? 'Assessment request submitted for admin approval.' : 'Assessment added to the subject gradebook.')
       setForm({ ...form, title: '', date: getToday() })
       await onRefresh()
     } catch (createError) {
@@ -1193,7 +1569,7 @@ function AssessmentsSection({ data, user, token, onRefresh }) {
     setMessage('')
     setBusy(true)
     try {
-      await request(`/api/assessments/${assessment.id}/records`, {
+      const result = await request(`/api/assessments/${assessment.id}/records`, {
         token,
         method: 'POST',
         body: JSON.stringify({
@@ -1204,7 +1580,7 @@ function AssessmentsSection({ data, user, token, onRefresh }) {
           })),
         }),
       })
-      setMessage('Marks and feedback saved and shared with students.')
+      setMessage(result.approval ? 'Marks request submitted for admin approval.' : 'Marks and feedback saved and shared with students.')
       await onRefresh()
     } catch (saveError) {
       setError(saveError.message)
@@ -1268,8 +1644,8 @@ function ResultsSection({ data, user, token, onRefresh }) {
     setMessage('')
     setBusyId(resultId)
     try {
-      await request(`/api/results/${resultId}/feedback`, { token, method: 'POST', body: JSON.stringify({ feedback: text }) })
-      setMessage('Feedback sent to the student.')
+      const result = await request(`/api/results/${resultId}/feedback`, { token, method: 'POST', body: JSON.stringify({ feedback: text }) })
+      setMessage(result.approval ? 'Feedback request submitted for admin approval.' : 'Feedback sent to the student.')
       await onRefresh()
     } catch (saveError) {
       setError(saveError.message)
@@ -1371,8 +1747,8 @@ function ReportCardsSection({ data, user, token, onRefresh }) {
     setMessage('')
     setBusy(true)
     try {
-      await request('/api/report-cards', { token, method: 'POST', body: JSON.stringify(form) })
-      setMessage('Report card saved and shared with the student.')
+      const result = await request('/api/report-cards', { token, method: 'POST', body: JSON.stringify(form) })
+      setMessage(result.approval ? 'Report-card request submitted for admin approval.' : 'Report card saved and shared with the student.')
       setForm({ ...form, subject: user.subject || '', continuousAssessment: 0, examScore: 0, teacherComment: '' })
       await onRefresh()
     } catch (saveError) {
@@ -1445,7 +1821,9 @@ function ReportCardsSection({ data, user, token, onRefresh }) {
         method: 'POST',
         body: JSON.stringify({ records }),
       })
-      setImportMessage(`${response.imported} report-card result${response.imported === 1 ? '' : 's'} imported successfully.`)
+      setImportMessage(response.approval
+        ? 'Results-sheet import request submitted for admin approval.'
+        : `${response.imported} report-card result${response.imported === 1 ? '' : 's'} imported successfully.`)
       await onRefresh()
     } catch (importException) {
       setImportError(importException.message)
@@ -1531,13 +1909,23 @@ function PortalWorkspace({ user, data, token, onRefresh, onSignOut }) {
     if (submitted === false) return
     await onSignOut()
   }, [onSignOut])
-  const links = NAVIGATION[user.role]
+  const links = user.role === 'teacher' && user.isFormTeacher
+      ? [...NAVIGATION.teacher.slice(0, 3), { id: 'create-account', label: 'Create student', icon: '+' }, ...NAVIGATION.teacher.slice(3)]
+      : NAVIGATION[user.role]
   const content = section === 'overview'
     ? <Overview user={user} data={data} setSection={setSection} />
     : section === 'profile'
       ? <ProfileSection user={user} token={token} photoVersion={profilePhotoVersion} onPhotoUpdated={() => setProfilePhotoVersion((version) => version + 1)} />
     : section === 'users'
-      ? <UsersSection data={data} user={user} token={token} onRefresh={onRefresh} onPhotoUpdated={() => setProfilePhotoVersion((version) => version + 1)} />
+        ? user.role === 'admin'
+          ? <UsersSection data={data} user={user} token={token} onRefresh={onRefresh} setSection={setSection} onPhotoUpdated={() => setProfilePhotoVersion((version) => version + 1)} />
+          : <StudentsSection data={data} user={user} token={token} setSection={setSection} onRefresh={onRefresh} onPhotoUpdated={() => setProfilePhotoVersion((version) => version + 1)} />
+        : section === 'create-account'
+          ? <CreateAccountSection data={data} user={user} token={token} onRefresh={onRefresh} onBack={() => setSection('users')} />
+          : section === 'form-teachers'
+            ? <FormTeachersSection data={data} token={token} onRefresh={onRefresh} />
+            : section === 'approvals'
+              ? <ApprovalsSection token={token} />
       : section === 'attendance'
         ? <AttendanceSection data={data} user={user} token={token} onRefresh={onRefresh} />
         : section === 'assignments'
