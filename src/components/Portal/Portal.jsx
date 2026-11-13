@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import schoolLogo from '../../assets/uc-visuals-logo.png'
+import ProfilePhoto from './ProfilePhoto.jsx'
 
 const DEMO_ACCOUNTS = [
   { role: 'Admin', email: 'admin@school.test', password: 'Admin123!', color: 'bg-violet-100 text-violet-700' },
@@ -18,6 +19,7 @@ const NAVIGATION = {
   ],
   teacher: [
     { id: 'overview', label: 'Overview', icon: '⌂' },
+    { id: 'users', label: 'My students', icon: '♙' },
     { id: 'attendance', label: 'Attendance', icon: '✓' },
     { id: 'assignments', label: 'Assignments', icon: '▧' },
     { id: 'assessments', label: 'Assessments', icon: '◉' },
@@ -206,9 +208,11 @@ function PortalHeader({ user, token, onSignOut }) {
               <p className="text-sm font-semibold text-slate-800">{user.name}</p>
               <p className="text-xs capitalize text-slate-500">{user.role}{user.className ? ` · ${user.className}` : ''}{user.subject ? ` · ${user.subject}` : ''}</p>
             </div>
-            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 font-bold text-slate-600" aria-hidden="true">
-              {user.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}
-            </span>
+            {user.role === 'student'
+              ? <ProfilePhoto token={token} userId={user.id} name={user.name} className="h-10 w-10" />
+              : <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 font-bold text-slate-600" aria-hidden="true">
+                {user.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}
+              </span>}
             {['admin', 'teacher', 'student'].includes(user.role) && <button onClick={() => { setPasswordDialogOpen(true); setPasswordError(''); setPasswordMessage('') }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"><span className="sm:hidden">Password</span><span className="hidden sm:inline">Change password</span></button>}
             <button onClick={onSignOut} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600">
               Sign out
@@ -402,14 +406,33 @@ function Overview({ user, data, setSection }) {
   )
 }
 
-function UsersSection({ data, token, onRefresh }) {
-  const [form, setForm] = useState({ name: '', email: '', role: 'student', className: 'Year 10', subject: '', password: '' })
+function UsersSection({ data, user, token, onRefresh }) {
+  const isAdmin = user.role === 'admin'
+  const classes = [...new Set([
+    ...data.students.map((student) => student.className),
+    ...data.users.map((account) => account.className),
+  ].filter(Boolean))]
+  const allowedTeacherClasses = [...new Set([user.className, ...(user.formTeacherClassNames || [])].filter(Boolean))]
+  const [form, setForm] = useState({ name: '', email: '', role: 'student', className: user.className || classes[0] || 'Year 10', subject: '', password: '' })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [deletingId, setDeletingId] = useState('')
   const [deleteMessage, setDeleteMessage] = useState('')
   const [deleteError, setDeleteError] = useState('')
+  const [resetPasswords, setResetPasswords] = useState({})
+  const [resettingId, setResettingId] = useState('')
+  const [resetMessage, setResetMessage] = useState('')
+  const [resetError, setResetError] = useState('')
+  const [photoVersions, setPhotoVersions] = useState({})
+  const [photoBusyId, setPhotoBusyId] = useState('')
+  const [photoError, setPhotoError] = useState('')
+  const teachers = data.users.filter((account) => account.role === 'teacher')
+  const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id || '')
+  const [selectedClasses, setSelectedClasses] = useState(teachers[0]?.formTeacherClassNames || [])
+  const [assignmentBusy, setAssignmentBusy] = useState(false)
+  const [assignmentMessage, setAssignmentMessage] = useState('')
+  const [assignmentError, setAssignmentError] = useState('')
 
   async function createUser(event) {
     event.preventDefault()
@@ -419,7 +442,7 @@ function UsersSection({ data, token, onRefresh }) {
     try {
       await request('/api/users', { token, method: 'POST', body: JSON.stringify(form) })
       setMessage('Account created successfully.')
-      setForm({ name: '', email: '', role: 'student', className: 'Year 10', subject: '', password: '' })
+      setForm({ name: '', email: '', role: 'student', className: user.className || classes[0] || 'Year 10', subject: '', password: '' })
       await onRefresh()
     } catch (createError) {
       setError(createError.message)
@@ -444,48 +467,161 @@ function UsersSection({ data, token, onRefresh }) {
     }
   }
 
+  async function resetPassword(account) {
+    const newPassword = resetPasswords[account.id] || ''
+    if (newPassword.length < 8) {
+      setResetError('Enter a temporary password with at least 8 characters.')
+      setResetMessage('')
+      return
+    }
+    setResetError('')
+    setResetMessage('')
+    setResettingId(account.id)
+    try {
+      await request(`/api/users/${encodeURIComponent(account.id)}/reset-password`, {
+        token,
+        method: 'POST',
+        body: JSON.stringify({ newPassword }),
+      })
+      setResetPasswords({ ...resetPasswords, [account.id]: '' })
+      setResetMessage(`Password reset for ${account.name}.`)
+    } catch (resetError) {
+      setResetError(resetError.message)
+    } finally {
+      setResettingId('')
+    }
+  }
+
+  async function uploadPhoto(student, file) {
+    setPhotoError('')
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setPhotoError('Choose a JPG, PNG, or WebP image.')
+      return
+    }
+    if (file.size > 700 * 1024) {
+      setPhotoError('Profile photos must be 700 KB or smaller.')
+      return
+    }
+    setPhotoBusyId(student.id)
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = () => reject(new Error('The selected photo could not be read.'))
+        reader.readAsDataURL(file)
+      })
+      await request(`/api/users/${encodeURIComponent(student.id)}/profile-photo`, {
+        token,
+        method: 'POST',
+        body: JSON.stringify({ dataUrl }),
+      })
+      setPhotoVersions({ ...photoVersions, [student.id]: (photoVersions[student.id] || 0) + 1 })
+    } catch (uploadError) {
+      setPhotoError(uploadError.message)
+    } finally {
+      setPhotoBusyId('')
+    }
+  }
+
+  async function saveFormTeacherClasses(event) {
+    event.preventDefault()
+    setAssignmentError('')
+    setAssignmentMessage('')
+    setAssignmentBusy(true)
+    try {
+      await request(`/api/users/${encodeURIComponent(selectedTeacherId)}/form-teacher-classes`, {
+        token,
+        method: 'PUT',
+        body: JSON.stringify({ classNames: selectedClasses }),
+      })
+      setAssignmentMessage('Form-teacher assignments saved.')
+      await onRefresh()
+    } catch (saveError) {
+      setAssignmentError(saveError.message)
+    } finally {
+      setAssignmentBusy(false)
+    }
+  }
+
+  function chooseTeacher(teacherId) {
+    const selected = teachers.find((teacher) => teacher.id === teacherId)
+    setSelectedTeacherId(teacherId)
+    setSelectedClasses(selected?.formTeacherClassNames || [])
+  }
+
   return (
     <>
-      <SectionTitle eyebrow="Administration" title="Manage school accounts" />
-      <div className="grid items-start gap-5 xl:grid-cols-[.8fr_1.2fr]">
-        <Panel title="Create an account">
+      <SectionTitle eyebrow={isAdmin ? 'Administration' : 'Classroom'} title={isAdmin ? 'Manage school accounts' : 'My students'} />
+      <div className={`grid items-start gap-5 ${isAdmin ? 'xl:grid-cols-[.8fr_1.2fr]' : 'xl:grid-cols-1'}`}>
+        <Panel title={isAdmin ? 'Create an account' : 'Create a student account'}>
           <form onSubmit={createUser} className="space-y-4 p-5">
             <label className="block text-sm font-semibold text-slate-700">Full name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="portal-input" placeholder="Full name" /></label>
             <label className="block text-sm font-semibold text-slate-700">Email address<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="portal-input" placeholder="name@school.com" /></label>
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block text-sm font-semibold text-slate-700">Role<select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} className="portal-input"><option value="student">Student</option><option value="teacher">Teacher</option></select></label>
-              <label className="block text-sm font-semibold text-slate-700">Class<input value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} className="portal-input" placeholder="Year 10" /></label>
+              {isAdmin ? <label className="block text-sm font-semibold text-slate-700">Role<select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} className="portal-input"><option value="student">Student</option><option value="teacher">Teacher</option></select></label> : <p className="flex items-center rounded-xl bg-slate-50 px-3 text-sm font-semibold text-slate-600">Account type: Student</p>}
+              <label className="block text-sm font-semibold text-slate-700">Class<input required value={form.className} onChange={(event) => setForm({ ...form, className: event.target.value })} list="portal-account-classes" className="portal-input" placeholder="Year 10" /></label>
             </div>
             {form.role === 'teacher' && <label className="block text-sm font-semibold text-slate-700">Teaching subject<input required value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input" placeholder="e.g. Mathematics" /></label>}
+            {isAdmin && <datalist id="portal-account-classes">{classes.map((className) => <option key={className} value={className} />)}</datalist>}
+            {!isAdmin && <p className="text-xs leading-5 text-slate-500">You can create student accounts only for your assigned class. Student accounts cannot change their own marks.</p>}
             <label className="block text-sm font-semibold text-slate-700">Temporary password<input required minLength="8" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="portal-input" placeholder="At least 8 characters" /></label>
             {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
             {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
-            <button disabled={busy} className="w-full rounded-xl bg-slate-900 px-4 py-3 font-bold text-white hover:bg-slate-700 disabled:opacity-60">{busy ? 'Creating…' : 'Create account'}</button>
+            <button disabled={busy || (!isAdmin && (!allowedTeacherClasses.length || !allowedTeacherClasses.includes(form.className)))} className="w-full rounded-xl bg-slate-900 px-4 py-3 font-bold text-white hover:bg-slate-700 disabled:opacity-60">{busy ? 'Creating…' : 'Create account'}</button>
           </form>
         </Panel>
-        <Panel title={`All accounts · ${data.users.length}`}>
+        {isAdmin && <Panel title={`All accounts · ${data.users.length}`}>
           {deleteError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{deleteError}</p>}
           {deleteMessage && <p role="status" className="px-5 pt-4 text-sm text-emerald-700">{deleteMessage}</p>}
+          {resetError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{resetError}</p>}
+          {resetMessage && <p role="status" className="px-5 pt-4 text-sm text-emerald-700">{resetMessage}</p>}
+          {photoError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{photoError}</p>}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Name</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Class</th><th className="px-5 py-3">Subject</th><th className="px-5 py-3">Action</th></tr></thead>
-              <tbody className="divide-y divide-slate-100">{data.users.map((account) => <tr key={account.id}><td className="px-5 py-4 font-semibold text-slate-800">{account.name}</td><td className="px-5 py-4 text-slate-500">{account.email}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold capitalize text-slate-600">{account.role}</span></td><td className="px-5 py-4 text-slate-500">{account.className || '—'}</td><td className="px-5 py-4 text-slate-500">{account.subject || '—'}</td><td className="px-5 py-4"><button disabled={account.role === 'admin' || deletingId === account.id} onClick={() => deleteUser(account)} className="text-xs font-bold text-rose-700 hover:text-rose-900 disabled:cursor-not-allowed disabled:opacity-40">{deletingId === account.id ? 'Deleting…' : account.role === 'admin' ? 'Protected' : 'Delete'}</button></td></tr>)}</tbody>
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Name</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Class</th><th className="px-5 py-3">Subject</th><th className="px-5 py-3">Actions</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">{data.users.map((account) => <tr key={account.id}><td className="px-5 py-4"><span className="flex items-center gap-3">{account.role === 'student' ? <ProfilePhoto token={token} userId={account.id} name={account.name} refreshKey={photoVersions[account.id] || 0} className="h-9 w-9 shrink-0 text-[10px]" /> : <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-600">{account.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}</span>}<span className="font-semibold text-slate-800">{account.name}</span></span></td><td className="px-5 py-4 text-slate-500">{account.email}</td><td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold capitalize text-slate-600">{account.role}</span></td><td className="px-5 py-4 text-slate-500">{account.className || '—'}</td><td className="px-5 py-4 text-slate-500">{account.subject || '—'}</td><td className="px-5 py-4"><div className="space-y-2">
+                {account.role === 'student' && <label className="block cursor-pointer text-xs font-bold text-emerald-700">{photoBusyId === account.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === account.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(account, file); event.target.value = '' }} className="sr-only" /></label>}
+                <div className="flex gap-1"><input aria-label={`Temporary password for ${account.name}`} type="password" minLength="8" value={resetPasswords[account.id] || ''} onChange={(event) => setResetPasswords({ ...resetPasswords, [account.id]: event.target.value })} className="w-32 rounded-md border border-slate-200 px-2 py-1 text-xs" placeholder="New password" /><button disabled={resettingId === account.id} onClick={() => void resetPassword(account)} className="text-xs font-bold text-sky-700 disabled:opacity-60">{resettingId === account.id ? 'Resetting…' : 'Reset'}</button></div>
+                <button disabled={account.role === 'admin' || deletingId === account.id} onClick={() => deleteUser(account)} className="text-xs font-bold text-rose-700 hover:text-rose-900 disabled:cursor-not-allowed disabled:opacity-40">{deletingId === account.id ? 'Deleting…' : account.role === 'admin' ? 'Protected' : 'Delete account'}</button>
+              </div></td></tr>)}</tbody>
             </table>
           </div>
-        </Panel>
+        </Panel>}
+        {!isAdmin && <Panel title={`Students in assigned classes · ${data.students.length}`}>
+          {photoError && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{photoError}</p>}
+          {!data.students.length ? <div className="p-5"><EmptyState>No students are currently assigned to your classes.</EmptyState></div> : <div className="divide-y divide-slate-100">{data.students.map((student) => <div key={student.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={student.id} name={student.name} refreshKey={photoVersions[student.id] || 0} className="h-11 w-11 shrink-0 text-xs" /><span><span className="block font-semibold text-slate-800">{student.name}</span><span className="text-xs text-slate-500">{student.email} · {student.className}</span></span></span><label className="cursor-pointer rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">{photoBusyId === student.id ? 'Uploading…' : 'Upload photo'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={photoBusyId === student.id} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(student, file); event.target.value = '' }} className="sr-only" /></label></div>)}</div>}
+        </Panel>}
       </div>
+      {isAdmin && <div className="mt-5">
+        <Panel title="Assign form teachers">
+          {!teachers.length ? <div className="p-5"><EmptyState>Create a teacher account before assigning a form class.</EmptyState></div> : <form onSubmit={saveFormTeacherClasses} className="space-y-4 p-5">
+            <label className="block text-sm font-semibold text-slate-700">Teacher<select value={selectedTeacherId} onChange={(event) => chooseTeacher(event.target.value)} className="portal-input">{teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name} · {teacher.className || 'No primary class'}</option>)}</select></label>
+            {classes.length ? <fieldset><legend className="text-sm font-semibold text-slate-700">Form-teacher classes</legend><div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{classes.map((className) => {
+              const primaryClass = teachers.find((teacher) => teacher.id === selectedTeacherId)?.className
+              const checked = selectedClasses.includes(className)
+              return <label key={className} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${className === primaryClass ? 'border-slate-100 bg-slate-50 text-slate-400' : 'border-slate-200 text-slate-700'}`}><input type="checkbox" disabled={className === primaryClass} checked={className === primaryClass || checked} onChange={(event) => setSelectedClasses(event.target.checked ? [...selectedClasses, className] : selectedClasses.filter((item) => item !== className))} />{className}{className === primaryClass ? ' · primary class' : ''}</label>
+            })}</div></fieldset> : <p className="text-sm text-slate-500">Add student or teacher accounts with class names before assigning form classes.</p>}
+            <div className="flex flex-wrap items-center gap-3"><button disabled={assignmentBusy} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white disabled:opacity-60">{assignmentBusy ? 'Saving…' : 'Save class assignments'}</button>{assignmentError && <p role="alert" className="text-sm text-rose-700">{assignmentError}</p>}{assignmentMessage && <p role="status" className="text-sm text-emerald-700">{assignmentMessage}</p>}</div>
+          </form>}
+        </Panel>
+      </div>}
     </>
   )
 }
 
 function AttendanceSection({ data, user, token, onRefresh }) {
   const [date, setDate] = useState(getToday)
+  const classNames = [...new Set(data.students.map((student) => student.className).filter(Boolean))]
+  const [selectedClass, setSelectedClass] = useState(user.className || classNames[0] || '')
   const [attendanceOverrides, setAttendanceOverrides] = useState({})
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const todaysAttendance = data.attendance.filter((entry) => entry.date === date)
-  const present = Object.fromEntries(data.students.map((student) => {
+  const activeClass = classNames.includes(selectedClass) ? selectedClass : classNames[0] || ''
+  const classStudents = data.students.filter((student) => student.className === activeClass)
+  const canRecordAttendance = user.role === 'admin' || user.className === activeClass
+  const todaysAttendance = data.attendance.filter((entry) => entry.date === date && entry.className === activeClass)
+  const present = Object.fromEntries(classStudents.map((student) => {
     const recorded = todaysAttendance.find((entry) => entry.studentId === student.id)
     return [student.id, attendanceOverrides[`${date}:${student.id}`] ?? recorded?.present ?? true]
   }))
@@ -501,8 +637,8 @@ function AttendanceSection({ data, user, token, onRefresh }) {
         method: 'POST',
         body: JSON.stringify({
           date,
-          className: user.className || data.students[0]?.className || 'Year 10',
-          entries: data.students.map((student) => ({ studentId: student.id, present: present[student.id] })),
+          className: activeClass,
+          entries: classStudents.map((student) => ({ studentId: student.id, present: present[student.id] })),
         }),
       })
       setMessage('Attendance saved.')
@@ -516,19 +652,28 @@ function AttendanceSection({ data, user, token, onRefresh }) {
 
   return (
     <>
-      <SectionTitle eyebrow="Classroom" title="Take attendance" action={<label className="text-sm font-semibold text-slate-600">Date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="ml-2 rounded-lg border border-slate-200 px-3 py-2" /></label>} />
-      <Panel title={`${user.className || 'Your class'} · ${data.students.length} students`}>
-        {!data.students.length ? <div className="p-5"><EmptyState>No student accounts have been assigned to this class yet.</EmptyState></div> : (
+      <SectionTitle eyebrow="Classroom" title="Take attendance" action={<div className="flex flex-wrap gap-3">
+        {classNames.length > 0 && <label className="text-sm font-semibold text-slate-600">Class<select value={activeClass} onChange={(event) => setSelectedClass(event.target.value)} className="ml-2 rounded-lg border border-slate-200 px-3 py-2">{classNames.map((className) => <option key={className}>{className}</option>)}</select></label>}
+        <label className="text-sm font-semibold text-slate-600">Date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="ml-2 rounded-lg border border-slate-200 px-3 py-2" /></label>
+      </div>} />
+      <Panel title={`${activeClass || 'Assigned classes'} · ${classStudents.length} students`}>
+        {!classStudents.length ? <div className="p-5"><EmptyState>No student accounts have been assigned to this class yet.</EmptyState></div> : canRecordAttendance ? (
           <form onSubmit={saveAttendance}>
             <div className="divide-y divide-slate-100">
-              {data.students.map((student) => <label key={student.id} className="flex cursor-pointer items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50"><span><span className="block font-semibold text-slate-800">{student.name}</span><span className="text-xs text-slate-500">{student.email}</span></span><span className="flex items-center gap-3 text-sm"><span className={present[student.id] === false ? 'text-rose-700' : 'text-emerald-700'}>{present[student.id] === false ? 'Absent' : 'Present'}</span><input type="checkbox" checked={present[student.id]} onChange={(event) => setAttendanceOverrides({ ...attendanceOverrides, [`${date}:${student.id}`]: event.target.checked })} className="h-5 w-5 accent-emerald-600" aria-label={`${student.name} present`} /></span></label>)}
+              {classStudents.map((student) => <label key={student.id} className="flex cursor-pointer items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={student.id} name={student.name} className="h-10 w-10 shrink-0 text-xs" /><span><span className="block font-semibold text-slate-800">{student.name}</span><span className="text-xs text-slate-500">{student.email}</span></span></span><span className="flex items-center gap-3 text-sm"><span className={present[student.id] === false ? 'text-rose-700' : 'text-emerald-700'}>{present[student.id] === false ? 'Absent' : 'Present'}</span><input type="checkbox" checked={present[student.id]} onChange={(event) => setAttendanceOverrides({ ...attendanceOverrides, [`${date}:${student.id}`]: event.target.checked })} className="h-5 w-5 accent-emerald-600" aria-label={`${student.name} present`} /></span></label>)}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4">
               <div>{error && <p role="alert" className="text-sm text-rose-700">{error}</p>}{message && <p role="status" className="text-sm text-emerald-700">{message}</p>}</div>
               <button disabled={busy} className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-700 disabled:opacity-60">{busy ? 'Saving…' : 'Save attendance'}</button>
             </div>
           </form>
-        )}
+        ) : <div className="divide-y divide-slate-100">
+          {classStudents.map((student) => {
+            const recorded = todaysAttendance.find((entry) => entry.studentId === student.id)
+            return <div key={student.id} className="flex items-center justify-between gap-4 px-5 py-4"><span className="flex items-center gap-3"><ProfilePhoto token={token} userId={student.id} name={student.name} className="h-10 w-10 shrink-0 text-xs" /><span><span className="block font-semibold text-slate-800">{student.name}</span><span className="text-xs text-slate-500">{student.email}</span></span></span><span className={`text-sm font-semibold ${recorded?.present === false ? 'text-rose-700' : recorded?.present === true ? 'text-emerald-700' : 'text-slate-400'}`}>{recorded ? recorded.present ? 'Present' : 'Absent' : 'Not recorded'}</span></div>
+          })}
+          <p className="px-5 py-4 text-sm text-slate-500">You can view attendance for your assigned form class. Only the class teacher or an admin can record it.</p>
+        </div>}
       </Panel>
     </>
   )
@@ -1092,6 +1237,49 @@ function ResultsSection({ data, user, token, onRefresh }) {
   )
 }
 
+function parseCsvRows(content) {
+  const rows = []
+  let row = []
+  let field = ''
+  let quoted = false
+
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index]
+    if (character === '"') {
+      if (quoted && content[index + 1] === '"') {
+        field += '"'
+        index += 1
+      } else {
+        quoted = !quoted
+      }
+    } else if (character === ',' && !quoted) {
+      row.push(field.trim())
+      field = ''
+    } else if (character === '\n' && !quoted) {
+      row.push(field.trim())
+      if (row.some(Boolean)) rows.push(row)
+      row = []
+      field = ''
+    } else if (character !== '\r' || quoted) {
+      field += character
+    }
+  }
+  if (quoted) throw new Error('The CSV contains an unclosed quoted field.')
+  row.push(field.trim())
+  if (row.some(Boolean)) rows.push(row)
+  return rows
+}
+
+function downloadReportCardTemplate() {
+  const headers = 'studentEmail,subject,term,academicYear,continuousAssessment,examScore,attendancePresent,attendanceTotal,teacherComment,conduct,headTeacherRemark'
+  const url = URL.createObjectURL(new Blob([`${headers}\r\n`], { type: 'text/csv;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'report-card-results-template.csv'
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
 function ReportCardsSection({ data, user, token, onRefresh }) {
   const [form, setForm] = useState({
     studentId: data.students[0]?.id || '',
@@ -1109,6 +1297,9 @@ function ReportCardsSection({ data, user, token, onRefresh }) {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [importError, setImportError] = useState('')
+  const [importMessage, setImportMessage] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
 
   async function saveReportCard(event) {
     event.preventDefault()
@@ -1127,6 +1318,78 @@ function ReportCardsSection({ data, user, token, onRefresh }) {
     }
   }
 
+  async function importCsv(file) {
+    setImportError('')
+    setImportMessage('')
+    setImportBusy(true)
+    try {
+      const rows = parseCsvRows(await file.text())
+      if (rows.length < 2) throw new Error('The CSV must include a header row and at least one result row.')
+      const headers = rows[0].map((header) => header.toLowerCase())
+      const requiredHeaders = ['studentemail', 'subject', 'term', 'academicyear', 'continuousassessment', 'examscore']
+      const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header))
+      if (missingHeaders.length) throw new Error(`Missing required CSV columns: ${missingHeaders.join(', ')}.`)
+      const valueAt = (row, header) => {
+        const index = headers.indexOf(header)
+        return index < 0 ? '' : (row[index] || '').trim()
+      }
+      const numericValue = (row, header, minimum, maximum, optional = false) => {
+        const raw = valueAt(row, header)
+        if (optional && !raw) return 0
+        if (!raw) throw new Error(`${header} is required.`)
+        const value = Number(raw)
+        if (!Number.isFinite(value) || value < minimum || value > maximum) {
+          throw new Error(`${header} must be a number from ${minimum} to ${maximum}.`)
+        }
+        return value
+      }
+      const records = rows.slice(1).map((row, index) => {
+        const rowNumber = index + 2
+        try {
+          const studentEmail = valueAt(row, 'studentemail').toLowerCase()
+          const student = data.students.find((item) => item.email.toLowerCase() === studentEmail)
+          if (!student) throw new Error(`No accessible student matches "${studentEmail}".`)
+          const subject = valueAt(row, 'subject')
+          const term = valueAt(row, 'term')
+          const academicYear = valueAt(row, 'academicyear')
+          if (!subject || !term || !academicYear) throw new Error('Student email, subject, term, and academic year are required.')
+          const attendancePresent = numericValue(row, 'attendancepresent', 0, 1000, true)
+          const attendanceTotal = numericValue(row, 'attendancetotal', 0, 1000, true)
+          if (!Number.isInteger(attendancePresent) || !Number.isInteger(attendanceTotal) || attendancePresent > attendanceTotal) {
+            throw new Error('Attendance must use whole numbers; days present cannot exceed school days.')
+          }
+          return {
+            studentId: student.id,
+            subject,
+            term,
+            academicYear,
+            continuousAssessment: numericValue(row, 'continuousassessment', 0, 40),
+            examScore: numericValue(row, 'examscore', 0, 60),
+            attendancePresent,
+            attendanceTotal,
+            teacherComment: valueAt(row, 'teachercomment'),
+            conduct: valueAt(row, 'conduct'),
+            headTeacherRemark: valueAt(row, 'headteacherremark'),
+          }
+        } catch (rowError) {
+          throw new Error(`CSV row ${rowNumber}: ${rowError.message}`)
+        }
+      })
+      if (records.length > 500) throw new Error('Import no more than 500 result rows at a time.')
+      const response = await request('/api/report-cards/import', {
+        token,
+        method: 'POST',
+        body: JSON.stringify({ records }),
+      })
+      setImportMessage(`${response.imported} report-card result${response.imported === 1 ? '' : 's'} imported successfully.`)
+      await onRefresh()
+    } catch (importException) {
+      setImportError(importException.message)
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
   const reportCards = useMemo(() => {
     const groups = new Map()
     for (const card of data.reportCards) {
@@ -1140,6 +1403,18 @@ function ReportCardsSection({ data, user, token, onRefresh }) {
   return (
     <>
       <SectionTitle eyebrow={user.role === 'student' ? 'Your progress' : `Academic records${user.subject ? ` · ${user.subject}` : ''}`} title={user.role === 'student' ? 'My school report cards' : 'School report cards'} />
+      {user.role !== 'student' && <Panel title="Upload results sheet">
+        <div className="space-y-4 p-5">
+          <p className="text-sm leading-6 text-slate-600">Import subject marks from a CSV file. The import is validated as a whole; if a row is invalid, no results from that file are saved. Existing marks for the same student, subject, term, and academic year are updated.</p>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={downloadReportCardTemplate} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Download CSV template</button>
+            <label className="cursor-pointer rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700">{importBusy ? 'Importing…' : 'Choose CSV file'}<input type="file" accept=".csv,text/csv" disabled={importBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importCsv(file); event.target.value = '' }} className="sr-only" /></label>
+          </div>
+          {importError && <p role="alert" className="text-sm text-rose-700">{importError}</p>}
+          {importMessage && <p role="status" className="text-sm text-emerald-700">{importMessage}</p>}
+          <p className="text-xs leading-5 text-slate-500">Required columns: studentEmail, subject, term, academicYear, continuousAssessment (0–40), examScore (0–60). Attendance and comments are optional. Use each student’s registered email.</p>
+        </div>
+      </Panel>}
       {user.role !== 'student' && <Panel title="Enter subject marks for a report card"><form onSubmit={saveReportCard} className="grid gap-4 p-5 md:grid-cols-2">
         <label className="block text-sm font-semibold text-slate-700">Student<select required value={form.studentId} onChange={(event) => setForm({ ...form, studentId: event.target.value })} className="portal-input"><option value="" disabled>Select a student</option>{data.students.map((student) => <option key={student.id} value={student.id}>{student.name} · {student.className}</option>)}</select></label>
         <label className="block text-sm font-semibold text-slate-700">Subject<input required readOnly={user.role === 'teacher' && Boolean(user.subject)} value={user.subject || form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} className="portal-input read-only:bg-slate-50" placeholder="e.g. Mathematics" /></label>
@@ -1195,7 +1470,7 @@ function PortalWorkspace({ user, data, token, onRefresh, onSignOut }) {
   const content = section === 'overview'
     ? <Overview user={user} data={data} setSection={setSection} />
     : section === 'users'
-      ? <UsersSection data={data} token={token} onRefresh={onRefresh} />
+      ? <UsersSection data={data} user={user} token={token} onRefresh={onRefresh} />
       : section === 'attendance'
         ? <AttendanceSection data={data} user={user} token={token} onRefresh={onRefresh} />
         : section === 'assignments'
