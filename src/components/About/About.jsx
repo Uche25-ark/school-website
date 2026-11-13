@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import FeatureTiles from "../Home/Featuretiles.jsx";
 import communityImage from "../../assets/community.jpg";
 import parentsImage from "../../assets/parents.jpg";
+import AnimatedCounter from "../AnimatedCounter.jsx";
 
 const HISTORY = [
   {
@@ -126,30 +127,36 @@ export default function About() {
       <FeatureTiles />
 
       <section
-        className="bg-[#31b9d4] py-12 text-white sm:py-14"
+        className="relative bg-ink bg-cover bg-center text-white md:bg-fixed"
+        style={{ backgroundImage: `url(${communityImage})` }}
         aria-labelledby="about-stats-heading"
       >
+        <div className="absolute inset-0 bg-[#0c2f38]/75" />
         <div className="mx-auto max-w-6xl px-4 text-center sm:px-6">
-          <h2
-            id="about-stats-heading"
-            className="font-slab text-2xl sm:text-3xl"
-          >
-            More than 70 Years of Experience
-          </h2>
-          <dl className="mt-9 grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5">
-            {[
-              ["100%", "Passing to Universities"],
-              ["126", "People working"],
-              ["2,480", "Students enrolled"],
-              ["72", "Years of experience"],
-              ["7,856", "Happy smiles"],
-            ].map(([value, label]) => (
-              <div key={label}>
-                <dt className="font-slab text-3xl sm:text-4xl">{value}</dt>
-                <dd className="mt-2 text-sm">{label}</dd>
-              </div>
-            ))}
-          </dl>
+          <div className="relative py-12 sm:py-14">
+            <h2
+              id="about-stats-heading"
+              className="font-slab text-2xl sm:text-3xl"
+            >
+              More than 70 Years of Experience
+            </h2>
+            <dl className="mt-9 grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5">
+              {[
+                { value: 100, suffix: "%", label: "Passing to Universities" },
+                { value: 126, label: "People working" },
+                { value: 2480, label: "Students enrolled" },
+                { value: 72, label: "Years of experience" },
+                { value: 7856, label: "Happy smiles" },
+              ].map(({ value, suffix, label }) => (
+                <div key={label}>
+                  <dt className="mt-2 text-sm">{label}</dt>
+                  <dd className="font-slab text-3xl sm:text-4xl">
+                    <AnimatedCounter value={value} suffix={suffix} />
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         </div>
       </section>
 

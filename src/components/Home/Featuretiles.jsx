@@ -54,28 +54,28 @@ const CourseIcon = () => (
 const TILES = [
   {
     title: 'Books & Library',
-    text: 'Lorem ipsum dolor sit amet, consectur cing elit. Suspe ndisse suscipit...',
+    text: 'Our library gives students a welcoming place to read, research, and build independent learning habits.',
     Icon: BookIcon,
     bg: 'bg-[#f76b4a]',
     iconColor: 'text-[#ffb79f]',
   },
   {
     title: 'Certification',
-    text: 'Lorem ipsum dolor sit amet, consectur cing elit. Suspe ndisse suscipit...',
+    text: 'We help students prepare for recognised qualifications and celebrate the progress they make along the way.',
     Icon: CertificateIcon,
     bg: 'bg-brand',
     iconColor: 'text-[#cdf28f]',
   },
   {
     title: 'Great Teachers',
-    text: 'Lorem ipsum dolor sit amet, consectur cing elit. Suspe ndisse suscipit...',
+    text: 'Our teachers offer thoughtful guidance, clear instruction, and encouragement to help every student grow.',
     Icon: TeachersIcon,
     bg: 'bg-[#04508a]',
     iconColor: 'text-[#2fc4e8]',
   },
   {
     title: 'Online Courses',
-    text: 'Lorem ipsum dolor sit amet, consectur cing elit. Suspe ndisse suscipit...',
+    text: 'Digital learning resources help students explore subjects, practise skills, and learn beyond the classroom.',
     Icon: CourseIcon,
     bg: 'bg-[#3498e8]',
     iconColor: 'text-[#6be6ee]',

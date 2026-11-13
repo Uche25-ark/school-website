@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import communityImage from '../../assets/community.jpg'
 import studentsImage from '../../assets/students.jpg'
 import parentsImage from '../../assets/parents.jpg'
+import AnimatedCounter from '../AnimatedCounter.jsx'
 
 const STRENGTHS = [
   {
@@ -62,7 +63,7 @@ const LEARNING_STEPS = [
     number: '04',
     title: 'Prepare for what comes next',
     text: 'Students build the skills and qualifications they need for further study and future opportunities. As they progress, they strengthen their independence, communication and problem-solving skills. These foundations help prepare them for the next stage of education and give them confidence as they consider their future goals.',
-    image: '/slides/slide-2.png',
+    image: '/slides/slide-2.jpg',
     alt: 'A member of the school community',
   },
 ]
@@ -201,15 +202,17 @@ export default function Academics() {
           </h2>
           <dl className="mt-9 grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5">
             {[
-              ['100%', 'University progression'],
-              ['126', 'School staff'],
-              ['2,480', 'Students enrolled'],
-              ['72', 'Years of experience'],
-              ['7,856', 'Happy smiles'],
-            ].map(([value, label]) => (
+              { value: 100, suffix: '%', label: 'University progression' },
+              { value: 126, label: 'School staff' },
+              { value: 2480, label: 'Students enrolled' },
+              { value: 72, label: 'Years of experience' },
+              { value: 7856, label: 'Happy smiles' },
+            ].map(({ value, suffix, label }) => (
               <div key={label}>
-                <dt className="font-slab text-3xl sm:text-4xl">{value}</dt>
-                <dd className="mt-2 text-sm">{label}</dd>
+                <dt className="mt-2 text-sm">{label}</dt>
+                <dd className="font-slab text-3xl sm:text-4xl">
+                  <AnimatedCounter value={value} suffix={suffix} />
+                </dd>
               </div>
             ))}
           </dl>

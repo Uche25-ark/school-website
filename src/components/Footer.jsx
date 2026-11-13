@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { SCHOOL, MAIN_LINKS } from '../data/school.js'
+import schoolLogo from '../assets/uc-visuals-logo.png'
 
 const YEAR = new Date().getFullYear()
 const SOCIAL_PLATFORMS = [
@@ -16,12 +17,7 @@ function SchoolLogo() {
       className="inline-flex items-center gap-3"
       aria-label={`${SCHOOL.name} home`}
     >
-      <svg viewBox="0 0 56 52" className="h-11 w-12 sm:h-[52px] sm:w-14" aria-hidden="true">
-        <path d="M3 8h20v38H8a5 5 0 0 1-5-5V8Z" fill="none" stroke="#78c750" strokeWidth="3" strokeLinejoin="round" />
-        <path d="M20 8l22 4v38l-22-4V8Z" fill="#f26b3f" />
-        <path d="M30 14l6 1v14l-3-2-3 3V14Z" fill="#fff" opacity=".9" />
-        <path d="M45 12h3v36h-3zM50 14h3v32h-3z" fill="#2aa7e0" />
-      </svg>
+      <img src={schoolLogo} alt="" className="h-12 w-12 rounded-lg bg-[#101c2a] object-contain p-1" />
       <span className="font-slab text-xl text-white">
         {SCHOOL.name}
         <span className="mt-1 block font-sans text-[9px] uppercase tracking-[0.14em] text-white/70">

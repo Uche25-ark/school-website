@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import schoolLogo from '../../assets/uc-visuals-logo.png'
 
 const DEMO_ACCOUNTS = [
   { role: 'Admin', email: 'admin@school.test', password: 'Admin123!', color: 'bg-violet-100 text-violet-700' },
@@ -192,7 +193,9 @@ function PortalHeader({ user, token, onSignOut }) {
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-[76px] max-w-[1440px] items-center justify-between px-4 sm:px-7 lg:px-10">
           <div className="flex items-center gap-3">
-            <Link to="/" className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#78c750] text-xl text-white" aria-label="School home">✦</Link>
+            <Link to="/" className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-[#101c2a] p-0.5" aria-label="School home">
+              <img src={schoolLogo} alt="" className="h-full w-full object-contain" />
+            </Link>
             <div>
               <p className="font-slab text-base font-bold text-slate-900">UC COMMUNICATION</p>
               <p className="text-[11px] font-medium tracking-wide text-slate-400">SCHOOL PORTAL</p>
@@ -206,7 +209,7 @@ function PortalHeader({ user, token, onSignOut }) {
             <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 font-bold text-slate-600" aria-hidden="true">
               {user.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}
             </span>
-            {['teacher', 'student'].includes(user.role) && <button onClick={() => { setPasswordDialogOpen(true); setPasswordError(''); setPasswordMessage('') }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"><span className="sm:hidden">Password</span><span className="hidden sm:inline">Change password</span></button>}
+            {['admin', 'teacher', 'student'].includes(user.role) && <button onClick={() => { setPasswordDialogOpen(true); setPasswordError(''); setPasswordMessage('') }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"><span className="sm:hidden">Password</span><span className="hidden sm:inline">Change password</span></button>}
             <button onClick={onSignOut} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600">
               Sign out
             </button>
@@ -269,7 +272,9 @@ function Login({ onLogin }) {
       <div className="mx-auto grid min-h-screen max-w-6xl items-center gap-12 px-4 py-10 md:grid-cols-[1.05fr_.95fr] md:px-8">
         <section className="hidden md:block">
           <Link to="/" className="inline-flex items-center gap-3 text-slate-900">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#78c750] text-2xl text-white">✦</span>
+            <span className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-[#101c2a] p-0.5">
+              <img src={schoolLogo} alt="" className="h-full w-full object-contain" />
+            </span>
             <span className="font-slab text-xl font-bold">UC COMMUNICATION</span>
           </Link>
           <p className="mt-20 text-sm font-bold uppercase tracking-[.22em] text-emerald-700">Learning together</p>
@@ -285,7 +290,9 @@ function Login({ onLogin }) {
 
         <section className="mx-auto w-full max-w-md">
           <div className="mb-8 text-center md:hidden">
-            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#78c750] text-2xl text-white">✦</span>
+            <span className="mx-auto flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-[#101c2a] p-0.5">
+              <img src={schoolLogo} alt="" className="h-full w-full object-contain" />
+            </span>
             <h1 className="mt-3 font-slab text-xl font-bold text-slate-900">UC COMMUNICATION</h1>
           </div>
           <div className="rounded-3xl border border-slate-100 bg-white p-7 shadow-xl shadow-slate-200/60 sm:p-9">

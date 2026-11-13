@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import communityImage from '../../assets/community.jpg'
+import AnimatedCounter from '../AnimatedCounter.jsx'
 
 /* ---------- Icons (24 x 24, white line style) ---------- */
 const iconProps = {
@@ -51,11 +52,11 @@ const SmileIcon = () => (
 
 /* ---------- Content ---------- */
 const STATS = [
-  { Icon: ThumbIcon, value: '100%', label: 'Passing to Universities' },
-  { Icon: PeopleIcon, value: '126', label: 'People working' },
-  { Icon: AwardIcon, value: '2480', label: 'Students Enrolled' },
-  { Icon: CalendarIcon, value: '72', label: 'Years of experience' },
-  { Icon: SmileIcon, value: '7856', label: 'Happy Smiles' },
+  { Icon: ThumbIcon, value: 100, suffix: '%', label: 'Passing to Universities' },
+  { Icon: PeopleIcon, value: 126, label: 'People working' },
+  { Icon: AwardIcon, value: 2480, label: 'Students Enrolled' },
+  { Icon: CalendarIcon, value: 72, label: 'Years of experience' },
+  { Icon: SmileIcon, value: 7856, label: 'Happy Smiles' },
 ]
 
 export default function StatsBand() {
@@ -75,13 +76,15 @@ export default function StatsBand() {
           </h2>
 
           <dl className="mt-10 grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 lg:grid-cols-5">
-            {STATS.map(({ Icon, value, label }) => (
+            {STATS.map(({ Icon, value, suffix, label }) => (
               <div key={label} className="flex flex-col items-center">
                 <div className="order-1">
                   <Icon />
                 </div>
                 <dt className="order-3 mt-2 text-[13px]">{label}</dt>
-                <dd className="order-2 mt-2 font-slab text-3xl leading-none sm:text-[34px]">{value}</dd>
+                <dd className="order-2 mt-2 font-slab text-3xl leading-none sm:text-[34px]">
+                  <AnimatedCounter value={value} suffix={suffix} />
+                </dd>
               </div>
             ))}
           </dl>

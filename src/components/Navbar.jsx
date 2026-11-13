@@ -1,38 +1,7 @@
 import { useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { SCHOOL, UTILITY_LINKS, MAIN_LINKS } from '../data/school.js'
-
-/* ---------- Icons ---------- */
-const PinIcon = () => (
-  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-    <path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11Z" />
-    <circle cx="12" cy="10" r="2.5" />
-  </svg>
-)
-
-const PhoneIcon = () => (
-  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-    <rect x="7" y="2" width="10" height="20" rx="2" />
-    <path d="M11 18h2" />
-  </svg>
-)
-
-const MailIcon = () => (
-  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-    <rect x="3" y="5" width="18" height="14" rx="2" />
-    <path d="m3 7 9 6 9-6" />
-  </svg>
-)
-
-const BookLogo = () => (
-  <svg viewBox="0 0 56 52" className="h-11 w-12 sm:h-[52px] sm:w-14" aria-hidden="true">
-    <path d="M3 8h20v38H8a5 5 0 0 1-5-5V8Z" fill="none" stroke="#78c750" strokeWidth="3" strokeLinejoin="round" />
-    <path d="M20 8l22 4v38l-22-4V8Z" fill="#f26b3f" />
-    <path d="M30 14l6 1v14l-3-2-3 3V14Z" fill="#fff" opacity=".9" />
-    <path d="M45 12h3v36h-3z" fill="#2aa7e0" />
-    <path d="M50 14h3v32h-3z" fill="#2aa7e0" opacity=".7" />
-  </svg>
-)
+import schoolLogo from '../assets/uc-visuals-logo.png'
 
 /* ---------- Component ---------- */
 export default function Navbar() {
@@ -41,51 +10,12 @@ export default function Navbar() {
 
   return (
     <header className="w-full">
-      {/* Top bar */}
-      <div className="bg-ink text-[12.5px] text-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-8 gap-y-1 px-4 py-2 sm:px-6 lg:px-16">
-          <ul className="flex flex-wrap items-center gap-x-6 gap-y-1">
-            <li className="hidden items-center gap-2 md:flex">
-              <PinIcon />
-              <span>{SCHOOL.location}</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <PhoneIcon />
-              <a href={`tel:${SCHOOL.phone.replace(/-/g, '')}`} className="hover:text-brand focus-visible:outline-2 focus-visible:outline-brand">
-                {SCHOOL.phone}
-              </a>
-            </li>
-            <li className="flex items-center gap-2">
-              <MailIcon />
-              <a href={`mailto:${SCHOOL.email}`} className="hover:text-brand focus-visible:outline-2 focus-visible:outline-brand">
-                {SCHOOL.email}
-              </a>
-            </li>
-          </ul>
-
-          <nav aria-label="Secondary" className="hidden md:block">
-            <ul className="flex items-center gap-x-6 tracking-[0.08em]">
-              {UTILITY_LINKS.map((l) => (
-                <li key={l.to}>
-                  <NavLink
-                    to={l.to}
-                    className={({ isActive }) =>
-                      `hover:text-brand focus-visible:outline-2 focus-visible:outline-brand ${isActive ? 'text-brand' : ''}`
-                    }
-                  >
-                    {l.label}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </div>
-      </div>
-
       {/* Logo */}
       <div className="bg-white">
         <Link to="/" onClick={close} className="mx-auto flex w-fit items-center gap-3 px-4 py-5 sm:py-7" aria-label={`${SCHOOL.name} home`}>
-          <BookLogo />
+          <span className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl bg-[#101c2a] p-1 sm:h-16 sm:w-16">
+            <img src={schoolLogo} alt="" className="h-full w-full object-contain" />
+          </span>
           <span className="flex flex-col leading-none">
             <span className="font-slab text-[28px] text-[#333] sm:text-[34px]">{SCHOOL.name}</span>
             <span className="mt-1.5 font-slab text-[9px] uppercase tracking-[0.14em] text-[#555] sm:text-[10.5px]">
